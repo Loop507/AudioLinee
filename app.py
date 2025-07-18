@@ -77,17 +77,21 @@ class VideoGenerator:
         self.TEMP_VIDEO = "temp_output.mp4"
         self.FINAL_VIDEO = "final_output.mp4"
         self.LINE_DENSITY = 30 if level == "soft" else 40 if level == "medium" else 50
-        self.cmap = cm.get_cmap("plasma")
-        self.norm = colors.Normalize(vmin=0, vmax=1)
-        self.scalar_map = cm.ScalarMappable(norm=self.norm, cmap=self.cmap)
-        self.colors_cache = {}
 
     def energy_to_color(self, energy: float) -> Tuple[int, int, int]:
-        key = int(energy * 100)
-        if key not in self.colors_cache:
-            rgba = self.scalar_map.to_rgba(energy)
-            self.colors_cache[key] = tuple(int(x * 255) for x in rgba[:3])
-        return self.colors_cache[key]
+        return (0, 0, 0)  # Nero puro per stile a china
+
+    def draw_connected_network(self, frame, num_nodes, time_index, mel_spec_norm):
+        points = []
+        for _ in range(num_nodes):
+            x = np.random.randint(0, self.FRAME_WIDTH)
+            y = np.random.randint(0, self.FRAME_HEIGHT)
+            points.append((x, y))
+        for i in range(len(points)):
+            for j in range(i+1, len(points)):
+                energy = mel_spec_norm[np.random.randint(0, mel_spec_norm.shape[0]), time_index]
+                if energy > 0.3:
+                    cv2.line(frame, points[i], points[j], (0, 0, 0), 1)
 
     def generate_video(self, mel_spec_norm: np.ndarray, audio_duration: float, sync_audio: bool = False) -> bool:
         try:
@@ -104,28 +108,10 @@ class VideoGenerator:
             status_text = st.empty()
             for frame_idx in range(total_frames):
                 try:
-                    frame = np.zeros((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8)
+                    frame = np.ones((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8) * 255  # sfondo bianco
                     time_index = int((frame_idx / total_frames) * mel_spec_norm.shape[1])
                     time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
-                    for _ in range(self.LINE_DENSITY):
-                        freq_index = np.random.randint(0, mel_spec_norm.shape[0])
-                        energy = mel_spec_norm[freq_index, time_index]
-                        color = self.energy_to_color(energy)
-                        total_bands = mel_spec_norm.shape[0]
-                        if freq_index < total_bands * 0.33:
-                            length = np.random.randint(10, 40)
-                            y = np.random.randint(0, self.FRAME_HEIGHT // 3)
-                        elif freq_index < total_bands * 0.66:
-                            length = np.random.randint(40, 80)
-                            y = np.random.randint(self.FRAME_HEIGHT // 3, 2 * self.FRAME_HEIGHT // 3)
-                        else:
-                            length = np.random.randint(80, 150)
-                            y = np.random.randint(2 * self.FRAME_HEIGHT // 3, self.FRAME_HEIGHT)
-                        x = np.random.randint(0, self.FRAME_WIDTH)
-                        angle = np.random.uniform(-np.pi / 4, np.pi / 4)
-                        x2 = int(x + length * np.cos(angle))
-                        y2 = int(y + length * np.sin(angle))
-                        cv2.line(frame, (x, y), (x2, y2), color, 1)
+                    self.draw_connected_network(frame, num_nodes=15, time_index=time_index, mel_spec_norm=mel_spec_norm)
                     video_writer.write(frame)
                     if frame_idx % 10 == 0:
                         progress = (frame_idx + 1) / total_frames
