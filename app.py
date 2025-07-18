@@ -42,10 +42,28 @@ def generate_video(format="1:1", level="medium", sync_audio=False):
             os.remove(f)
 
     # Carica l'audio
-    y, sr = librosa.load("input_audio.wav", sr=None)
+    try:
+        y, sr = librosa.load("input_audio.wav", sr=None)
+    except Exception as e:
+        st.error("Errore nel caricamento dell'audio. Verifica che il file sia valido.")
+        st.stop()
+
+    if len(y) == 0:
+        st.error("Il file audio è vuoto o non è stato caricato correttamente.")
+        st.stop()
+
+    # Estrai lo spettrogramma
     S = librosa.feature.melspectrogram(y=y, sr=sr)
+    if S.size == 0:
+        st.error("Impossibile generare lo spettrogramma: l'audio è troppo breve o non è valido.")
+        st.stop()
+
     mel_spec_db = librosa.power_to_db(S, ref=np.max)
     mel_spec_norm = (mel_spec_db - mel_spec_db.min()) / (mel_spec_db.max() - mel_spec_db.min())
+
+    if mel_spec_norm.shape[1] == 0:
+        st.error("Lo spettrogramma è vuoto: l'audio è troppo breve o non contiene dati validi.")
+        st.stop()
 
     # Inizializza il writer del video
     video_writer = cv2.VideoWriter(
@@ -96,7 +114,7 @@ def generate_video(format="1:1", level="medium", sync_audio=False):
 
         # Calcolo time_index con protezione
         time_index = int(frame_idx / (FPS * DURATION_SECONDS) * mel_spec_norm.shape[1])
-        time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))  # ✅ Protezione aggiunta
+        time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
 
         # Linee verticali
         for i in range(LINE_DENSITY):
