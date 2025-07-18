@@ -1,4 +1,4 @@
-# 🎵 AudioLinee.py (by Loop507) - Versione aggiornata con Barcode e FPS personalizzabili
+# 🎵 AudioLinee.py (by Loop507) - Versione aggiornata e corretta
 
 import streamlit as st
 import numpy as np
@@ -13,20 +13,23 @@ st.set_page_config(page_title="🎞️ AudioLinee", layout="wide")
 
 # --- Impostazioni colore ---
 line_color = st.color_picker("🎨 Colore delle linee", "#000000")
-background_color = st.color_picker("🎼 Colore dello sfondo", "#FFFFFF")
+background_color = st.color_picker("🖼️ Colore dello sfondo", "#FFFFFF")
 
 # --- Impostazioni FPS ---
-fps_option = st.selectbox("🎥 FPS del video", [5, 10, 15, 24, 30, 60, 72], index=3)
+fps_option = st.selectbox("🎥 FPS del video", [5, 10, 15, 24, 30, 60, 72], index=2)
 
 # --- Modalità di visualizzazione ---
 effect_type = st.selectbox("✨ Tipo di visualizzazione", ["Linee", "Barcode"])
 
 # --- Funzione per calcolo BPM ---
 def estimate_bpm(y, sr):
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    return tempo
+    try:
+        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        return tempo
+    except:
+        return None
 
-# --- Funzione per disegnare linee ---
+# --- Funzione per disegnare linee verticali ---
 def draw_lines(frequencies, volume, width, height):
     img = np.ones((height, width, 3), dtype=np.uint8) * 255
     center = height // 2
@@ -39,14 +42,16 @@ def draw_lines(frequencies, volume, width, height):
         cv2.line(img, (x, center - 50), (x, center + 50), hex_to_bgr(line_color), thickness)
     return img
 
-# --- Funzione per disegnare barcode ---
+# --- Funzione per disegnare stile barcode ---
 def draw_barcode(frequencies, volume, width, height, bpm, frame_idx, fps):
     img = np.ones((height, width, 3), dtype=np.uint8) * 255
     bar_spacing = 10
     max_bars = width // bar_spacing
+    if np.max(frequencies) == 0:
+        return img
     energies = np.interp(frequencies[:max_bars], [0, np.max(frequencies)], [0, 1])
     threshold = volume * 0.2
-    beat_interval = int(fps / (bpm / 60)) if bpm > 0 else fps
+    beat_interval = int(fps / (bpm / 60)) if bpm and bpm > 0 else fps
     if frame_idx % beat_interval != 0:
         return img
     for i, e in enumerate(energies):
@@ -65,7 +70,7 @@ def hex_to_bgr(hex_color):
 # --- MAIN ---
 def main():
     st.title("🎵 AudioLinee")
-    audio_file = st.file_uploader("🏋️ Carica un file audio", type=[".mp3", ".wav"])
+    audio_file = st.file_uploader("🎧 Carica un file audio", type=[".mp3", ".wav"])
 
     if audio_file:
         st.audio(audio_file)
@@ -75,7 +80,11 @@ def main():
 
         y, sr = librosa.load(tmp_path)
         bpm = estimate_bpm(y, sr)
-        st.info(f"🎵 BPM stimati: {bpm:.1f}, FPS impostati: {fps_option}")
+        try:
+            st.info(f"🎵 BPM stimati: {bpm:.1f}, FPS impostati: {fps_option}")
+        except:
+            bpm = 120.0
+            st.info(f"🎵 BPM non disponibile, uso default 120 – FPS: {fps_option}")
 
         hop_length = 512
         S = np.abs(librosa.stft(y, hop_length=hop_length))
