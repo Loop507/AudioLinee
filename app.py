@@ -1,52 +1,53 @@
-# 🎵 AudioLinee.py (by Loop507) - Versione aggiornata con Barcode, Spectrum e FPS personalizzabili
-
 import streamlit as st
 import numpy as np
 import cv2
 import tempfile
 import os
 import librosa
-from PIL import Image
 
 st.set_page_config(page_title="🎞️ AudioLinee", layout="wide")
 
-# --- Impostazioni colore ---
-line_color = st.color_picker("🎨 Colore delle linee", "#000000")
-background_color = st.color_picker("🖼️ Colore dello sfondo", "#FFFFFF")
+# Colori
+line_color = st.color_picker("🎨 Colore linee", "#000000")
+background_color = st.color_picker("🖼️ Colore sfondo", "#FFFFFF")
 
-# --- Impostazioni FPS ---
+# FPS
 fps_option = st.selectbox("🎥 FPS del video", [5, 10, 15, 24, 30, 60, 72], index=3)
 
-# --- Modalità di visualizzazione ---
-effect_type = st.selectbox("✨ Tipo di visualizzazione", ["Linee", "Barcode", "Spectrum"])
+# Effetti
+effect_type = st.selectbox("✨ Tipo visualizzazione", ["Linee", "Barcode", "Spectrum"])
 
-# --- Funzione per calcolo BPM ---
+def hex_to_bgr(hex_color):
+    hex_color = hex_color.lstrip('#')
+    return tuple(int(hex_color[i:i+2], 16) for i in (4, 2, 0))
+
 def estimate_bpm(y, sr):
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    return tempo if tempo > 0 else None
+    try:
+        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        return tempo
+    except:
+        return None
 
-# --- Funzione per disegnare linee ---
-def draw_lines(frequencies, volume, width, height):
+def draw_lines(freqs, volume, width, height):
     img = np.ones((height, width, 3), dtype=np.uint8) * 255
     center = height // 2
-    max_freq = len(frequencies)
-    for i, energy in enumerate(frequencies):
+    max_freq = len(freqs)
+    for i, energy in enumerate(freqs):
         if energy < volume * 0.05:
             continue
-        thickness = int(np.interp(energy, [0, np.max(frequencies)], [1, 10]))
+        thickness = int(np.interp(energy, [0, np.max(freqs)], [1, 10]))
         x = int(np.interp(i, [0, max_freq], [0, width]))
         cv2.line(img, (x, center - 50), (x, center + 50), hex_to_bgr(line_color), thickness)
     return img
 
-# --- Funzione per disegnare barcode ---
-def draw_barcode(frequencies, volume, width, height, bpm, frame_idx, fps):
+def draw_barcode(freqs, volume, width, height, bpm, frame_idx, fps):
     img = np.ones((height, width, 3), dtype=np.uint8) * 255
     bar_spacing = 10
     max_bars = width // bar_spacing
-    energies = np.interp(frequencies[:max_bars], [0, np.max(frequencies)], [0, 1])
+    energies = np.interp(freqs[:max_bars], [0, np.max(freqs)], [0, 1])
     threshold = volume * 0.2
-    beat_interval = int(fps / (bpm / 60)) if bpm else fps
-    if frame_idx % beat_interval != 0:
+    beat_interval = int(fps / (bpm / 60)) if bpm and bpm > 0 else fps
+    if frame_idx % max(1, beat_interval) != 0:
         return img
     for i, e in enumerate(energies):
         if e < threshold:
@@ -56,77 +57,73 @@ def draw_barcode(frequencies, volume, width, height, bpm, frame_idx, fps):
         cv2.line(img, (x, 0), (x, height), hex_to_bgr(line_color), bar_thickness)
     return img
 
-# --- Funzione per disegnare lo Spectrum ---
-def draw_spectrum(frequencies, volume, width, height, mode="soft"):
+def draw_spectrum(freqs, volume, width, height):
     img = np.ones((height, width, 3), dtype=np.uint8) * 255
-    max_freq = len(frequencies)
-    for i, energy in enumerate(frequencies):
-        if energy < volume * 0.1:
+    max_freq = len(freqs)
+    for i, energy in enumerate(freqs):
+        if energy < volume * 0.05:
             continue
+        thickness = 2
         x = int(np.interp(i, [0, max_freq], [0, width]))
-        length = int(np.interp(energy, [0, np.max(frequencies)], [0, height]))
-        if mode == "soft":
-            cv2.line(img, (x, height//2), (x, height//2 - length), hex_to_bgr(line_color), 1)
-        elif mode == "medium":
-            cv2.line(img, (0, x), (length, x), hex_to_bgr(line_color), 1)
-        elif mode == "hard":
-            cv2.line(img, (x, height//2), (x, height//2 - length), hex_to_bgr(line_color), 1)
-            cv2.line(img, (0, x), (length, x), hex_to_bgr(line_color), 1)
+        y_top = height
+        y_bottom = height - int(energy * height)
+        cv2.line(img, (x, y_top), (x, y_bottom), hex_to_bgr(line_color), thickness)
     return img
 
-# --- Utilità colore ---
-def hex_to_bgr(hex_color):
-    hex_color = hex_color.lstrip('#')
-    return tuple(int(hex_color[i:i+2], 16) for i in (4, 2, 0))
-
-# --- MAIN ---
 def main():
     st.title("🎵 AudioLinee")
-    audio_file = st.file_uploader("🎧 Carica un file audio", type=[".mp3", ".wav"])
 
-    if audio_file:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
-            tmp.write(audio_file.read())
-            tmp_path = tmp.name
+    uploaded_file = st.file_uploader("🎧 Carica un file audio (.wav o .mp3)", type=["wav", "mp3"])
+    if not uploaded_file:
+        st.info("Carica un file audio per iniziare.")
+        return
 
-        y, sr = librosa.load(tmp_path)
-        bpm = estimate_bpm(y, sr)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(uploaded_file.read())
+        tmp_path = tmp.name
 
-        hop_length = 512
-        S = np.abs(librosa.stft(y, hop_length=hop_length))
-        volume = np.mean(S, axis=0)
+    y, sr = librosa.load(tmp_path)
+    bpm = estimate_bpm(y, sr)
+    if bpm is None:
+        bpm_display = "Non stimato"
+    else:
+        bpm_display = f"{bpm:.1f}"
+    st.info(f"🎵 BPM stimati: {bpm_display}, FPS impostati: {fps_option}")
 
-        if bpm:
-            st.info(f"🎵 BPM stimati: {bpm:.1f}, FPS impostati: {fps_option}")
+    hop_length = 512
+    S = np.abs(librosa.stft(y, hop_length=hop_length))
+    volume = np.mean(S, axis=0)
+
+    width, height = 1280, 720
+    total_frames = len(volume)
+    frames = []
+
+    for i in range(total_frames):
+        freqs = S[:, i]
+        vol = volume[i]
+
+        if effect_type == "Linee":
+            frame = draw_lines(freqs, vol, width, height)
+        elif effect_type == "Barcode":
+            frame = draw_barcode(freqs, vol, width, height, bpm, i, fps_option)
+        elif effect_type == "Spectrum":
+            frame = draw_spectrum(freqs, vol, width, height)
         else:
-            st.info(f"🎵 FPS impostati: {fps_option} (BPM non rilevati)")
+            frame = np.ones((height, width, 3), dtype=np.uint8) * 255
 
-        frames = []
-        total_frames = len(volume)
-        width, height = 1280, 720
+        frames.append(frame)
 
-        for i in range(total_frames):
-            freqs = S[:, i]
-            vol = volume[i]
-            if effect_type == "Linee":
-                frame = draw_lines(freqs, vol, width, height)
-            elif effect_type == "Barcode":
-                frame = draw_barcode(freqs, vol, width, height, bpm, i, fps_option)
-            elif effect_type == "Spectrum":
-                frame = draw_spectrum(freqs, vol, width, height, mode="soft")
-            frames.append(frame)
+    temp_dir = tempfile.mkdtemp()
+    video_path = os.path.join(temp_dir, "output.mp4")
 
-        temp_dir = tempfile.mkdtemp()
-        video_path = os.path.join(temp_dir, "output.avi")
+    out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps_option, (width, height))
+    for frame in frames:
+        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        out.write(frame_bgr)
+    out.release()
 
-        out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'XVID'), fps_option, (width, height))
-        for frame in frames:
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            out.write(frame_bgr)
-        out.release()
-
-        st.video(video_path)
-        st.success("✅ Video generato con successo!")
+    st.success("✅ Video generato con successo!")
+    st.video(video_path)
 
 if __name__ == "__main__":
     main()
