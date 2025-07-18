@@ -65,6 +65,13 @@ def generate_video(format="1:1", level="medium", sync_audio=False):
         st.error("Lo spettrogramma è vuoto: l'audio è troppo breve o non contiene dati validi.")
         st.stop()
 
+    # Calcola la durata effettiva dell'audio in secondi
+    AUDIO_DURATION = librosa.get_duration(y=y, sr=sr)
+    DURATION_SECONDS = min(DURATION_SECONDS, AUDIO_DURATION)
+    total_frames = int(AUDIO_DURATION * FPS)
+
+    st.info(f"🔊 Durata audio: {AUDIO_DURATION:.2f} secondi → Il video durerà esattamente {AUDIO_DURATION:.2f} secondi")
+
     # Inizializza il writer del video
     video_writer = cv2.VideoWriter(
         TEMP_VIDEO,
@@ -109,22 +116,12 @@ def generate_video(format="1:1", level="medium", sync_audio=False):
     if MULTI_BAND_FREQUENCIES:
         bands = np.array_split(mel_spec_norm, 4)
 
-    # Calcola la durata massima dell'audio in secondi
-    AUDIO_DURATION = mel_spec_norm.shape[1] / (sr / float(FPS))
-    total_frames = min(int(FPS * DURATION_SECONDS), mel_spec_norm.shape[1])
-    st.info(f"🔊 Durata audio: {AUDIO_DURATION:.2f} secondi → Limiterò il video a questa durata.")
-
     for frame_idx in range(total_frames):
         frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
 
         # Calcolo time_index con protezione completa
-        time_index_float = frame_idx / (FPS * DURATION_SECONDS) * mel_spec_norm.shape[1]
-        time_index = int(time_index_float)
-
-        if time_index >= mel_spec_norm.shape[1]:
-            time_index = mel_spec_norm.shape[1] - 1
-        elif time_index < 0:
-            time_index = 0
+        time_index = int((frame_idx / total_frames) * mel_spec_norm.shape[1])
+        time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
 
         # Linee verticali
         for i in range(LINE_DENSITY):
