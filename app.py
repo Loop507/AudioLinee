@@ -1,4 +1,4 @@
-# 🎵 AudioLinee.py (by Loop507) - Versione completa con BPM, volume e colori personalizzabili
+# 🎵 AudioLinee.py (versione corretta con gestione BPM robusta)
 import streamlit as st
 import numpy as np
 import cv2
@@ -43,8 +43,13 @@ def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Option
         return None, None, None
 
 def get_bpm(y: np.ndarray, sr: int) -> float:
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    return tempo
+    try:
+        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        if tempo <= 0:
+            return 90.0  # valore di default se non trova bpm validi
+        return tempo
+    except Exception:
+        return 90.0  # default sicuro
 
 def generate_melspectrogram(y: np.ndarray, sr: int) -> Optional[np.ndarray]:
     try:
@@ -182,7 +187,6 @@ def main():
         with open("input_audio.wav", "wb") as f:
             f.write(uploaded_file.read())
         st.success("🔊 Audio caricato correttamente!")
-
         y, sr, audio_duration = load_and_process_audio("input_audio.wav")
         if y is None:
             return
