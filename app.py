@@ -66,8 +66,11 @@ def estimate_bpm(y, sr) -> float:
     """Stima il BPM dell'audio"""
     try:
         tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
-        return float(tempo) if tempo > 0 else 120.0
-    except Exception:
+        # Converte numpy scalar a float python
+        tempo_val = float(tempo.item()) if hasattr(tempo, 'item') else float(tempo)
+        return tempo_val if tempo_val > 0 else 120.0
+    except Exception as e:
+        print(f"BPM estimation error: {e}")
         return 120.0
 
 def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> dict:
@@ -80,7 +83,7 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> dict:
         mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
         
         # Normalizza mel-spectrogram
-        mel_min, mel_max = mel_spec_db.min(), mel_spec_db.max()
+        mel_min, mel_max = float(mel_spec_db.min()), float(mel_spec_db.max())
         if mel_max != mel_min:
             mel_norm = (mel_spec_db - mel_min) / (mel_max - mel_min)
         else:
@@ -92,7 +95,7 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> dict:
         magnitude_db = librosa.amplitude_to_db(magnitude, ref=np.max)
         
         # Normalizza STFT
-        mag_min, mag_max = magnitude_db.min(), magnitude_db.max()
+        mag_min, mag_max = float(magnitude_db.min()), float(magnitude_db.max())
         if mag_max != mag_min:
             stft_norm = (magnitude_db - mag_min) / (mag_max - mag_min)
         else:
@@ -100,17 +103,22 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> dict:
         
         # RMS energy per linee
         rms = librosa.feature.rms(y=y, hop_length=512)[0]
-        rms_norm = (rms - rms.min()) / (rms.max() - rms.min()) if rms.max() != rms.min() else rms
+        rms_min, rms_max = float(rms.min()), float(rms.max())
+        rms_norm = (rms - rms_min) / (rms_max - rms_min) if rms_max != rms_min else rms
         
         # Beat tracking
         tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
+        
+        # Converte numpy scalars/arrays a tipi Python standard
+        tempo_val = float(tempo.item()) if hasattr(tempo, 'item') else float(tempo)
+        beats_array = beats.astype(np.float32) if hasattr(beats, 'astype') else beats
         
         return {
             'mel_spectrogram': mel_norm,
             'stft_magnitude': stft_norm,
             'rms_energy': rms_norm,
-            'beats': beats,
-            'tempo': tempo,
+            'beats': beats_array,
+            'tempo': tempo_val,
             'hop_length': 512,
             'sr': sr,
             'duration': duration
@@ -281,25 +289,38 @@ class VideoGenerator:
 
     def calculate_beat_intensity(self, frame_idx: int, features: dict) -> float:
         """Calcola intensità basata sui beat rilevati"""
-        if len(features['beats']) == 0:
+        try:
+            beats = features.get('beats', [])
+            if len(beats) == 0:
+                return 1.0
+            
+            # Converti frame in tempo
+            hop_length = features.get('hop_length', 512)
+            sr = features.get('sr', 22050)
+            current_time = frame_idx * (hop_length / sr)
+            
+            # Calcola tempi dei beat
+            beat_times = np.array(beats) * (hop_length / sr)
+            
+            # Trova beat più vicino
+            if len(beat_times) > 0:
+                distances = np.abs(beat_times - current_time)
+                closest_beat_dist = float(np.min(distances))
+            else:
+                closest_beat_dist = 1.0
+            
+            # Intensità inversamente proporzionale alla distanza dal beat
+            beat_window = 0.1  # 100ms window
+            if closest_beat_dist < beat_window:
+                intensity = 1.0 + 0.5 * (1 - closest_beat_dist / beat_window)
+            else:
+                intensity = 1.0
+            
+            return min(1.5, intensity)
+            
+        except Exception as e:
+            print(f"Beat intensity calculation error: {e}")
             return 1.0
-        
-        # Converti frame in tempo
-        current_time = frame_idx * (features['hop_length'] / features['sr'])
-        
-        # Trova beat più vicino
-        beat_times = features['beats'] * (features['hop_length'] / features['sr'])
-        distances = np.abs(beat_times - current_time)
-        closest_beat_dist = np.min(distances) if len(distances) > 0 else 1.0
-        
-        # Intensità inversamente proporzionale alla distanza dal beat
-        beat_window = 0.1  # 100ms window
-        if closest_beat_dist < beat_window:
-            intensity = 1.0 + 0.5 * (1 - closest_beat_dist / beat_window)
-        else:
-            intensity = 1.0
-        
-        return min(1.5, intensity)
 
     def generate_video(self, audio_features: dict, audio_file_path: str) -> bool:
         """Genera video con audio sincronizzato"""
@@ -452,7 +473,8 @@ def main():
                 return
             
             # Info audio
-            st.success(f"✅ **Audio elaborato:** {duration:.1f}s | **BPM:** {features['tempo']:.1f} | **SR:** {sr}Hz")
+            tempo_val = float(features['tempo']) if hasattr(features['tempo'], 'item') else features['tempo']
+            st.success(f"✅ **Audio elaborato:** {duration:.1f}s | **BPM:** {tempo_val:.1f} | **SR:** {sr}Hz")
             
             # Libera memoria
             del y
