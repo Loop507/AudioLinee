@@ -55,7 +55,7 @@ def generate_video(format="1:1", level="medium", sync_audio=False):
         (FRAME_WIDTH, FRAME_HEIGHT),
     )
 
-    # Crea una mappatura del colore (aggiornata)
+    # Crea una mappatura del colore
     cmap = cm.get_cmap("plasma")
     norm = colors.Normalize(vmin=0, vmax=1)
     scalar_map = cm.ScalarMappable(norm=norm, cmap=cmap)
@@ -93,7 +93,10 @@ def generate_video(format="1:1", level="medium", sync_audio=False):
 
     for frame_idx in range(FPS * DURATION_SECONDS):
         frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
-        time_index = min(int(frame_idx / (FPS * DURATION_SECONDS) * mel_spec_norm.shape[1]), mel_spec_norm.shape[1] - 1)
+
+        # Calcolo time_index con protezione
+        time_index = int(frame_idx / (FPS * DURATION_SECONDS) * mel_spec_norm.shape[1])
+        time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))  # ✅ Protezione aggiunta
 
         # Linee verticali
         for i in range(LINE_DENSITY):
