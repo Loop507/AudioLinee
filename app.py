@@ -1,5 +1,3 @@
-# 🎵 AudioLine by Loop507 - Versione Completa
-
 import streamlit as st
 import numpy as np
 import cv2
@@ -9,568 +7,241 @@ import subprocess
 import gc
 import shutil
 from typing import Tuple, Optional
-import contextlib
-import tempfile
 
 MAX_DURATION = 300  # 5 minuti massimo
 MIN_DURATION = 1.0  # 1 secondo minimo
-MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
-
-FORMAT_RESOLUTIONS = {
-    "16:9": (1280, 720),
-    "9:16": (720, 1280),
-    "1:1": (720, 720),
-    "4:3": (800, 600)
-}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 def check_ffmpeg() -> bool:
-    """Verifica se FFmpeg è disponibile"""
-    try:
-        result = subprocess.run(['ffmpeg', '-version'], 
-                              capture_output=True, text=True, timeout=5)
-        return result.returncode == 0
-    except:
-        return False
+    return shutil.which("ffmpeg") is not None
 
 def validate_audio_file(uploaded_file) -> bool:
-    """Valida il file audio caricato"""
     if uploaded_file.size > MAX_FILE_SIZE:
         st.error(f"❌ File troppo grande ({uploaded_file.size / 1024 / 1024:.1f}MB). Limite: {MAX_FILE_SIZE / 1024 / 1024:.1f}MB")
         return False
     return True
 
 def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Optional[int], Optional[float]]:
-    """Carica e processa il file audio con gestione errori migliorata"""
     try:
-        y, sr = librosa.load(file_path, sr=22050, mono=True)  # Standardizza SR
+        y, sr = librosa.load(file_path, sr=None, mono=True)
         if len(y) == 0:
             st.error("❌ Il file audio è vuoto o non è stato caricato correttamente.")
             return None, None, None
-        
         audio_duration = librosa.get_duration(y=y, sr=sr)
         if audio_duration < MIN_DURATION:
             st.error(f"❌ L'audio deve essere lungo almeno {MIN_DURATION} secondi. Durata attuale: {audio_duration:.2f}s")
             return None, None, None
-        
         if audio_duration > MAX_DURATION:
             st.warning(f"⚠️ Audio troppo lungo ({audio_duration:.1f}s). Verrà troncato a {MAX_DURATION}s.")
             y = y[:int(MAX_DURATION * sr)]
             audio_duration = MAX_DURATION
-        
         return y, sr, audio_duration
     except Exception as e:
         st.error(f"❌ Errore nel caricamento dell'audio: {str(e)}")
         return None, None, None
 
-def estimate_bpm(y, sr) -> float:
-    """Stima il BPM dell'audio"""
+def generate_melspectrogram(y: np.ndarray, sr: int) -> Optional[np.ndarray]:
     try:
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
-        # Converte numpy scalar a float python
-        tempo_val = float(tempo.item()) if hasattr(tempo, 'item') else float(tempo)
-        return tempo_val if tempo_val > 0 else 120.0
+        S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=sr/2)
+        if S.size == 0:
+            st.error("❌ Impossibile generare lo spettrogramma: l'audio è troppo breve o non è valido.")
+            return None
+        mel_spec_db = librosa.power_to_db(S, ref=np.max)
+        min_val = mel_spec_db.min()
+        max_val = mel_spec_db.max()
+        if max_val == min_val:
+            st.error("❌ L'audio non contiene variazioni sufficienti per generare il video.")
+            return None
+        mel_spec_norm = (mel_spec_db - min_val) / (max_val - min_val)
+        if mel_spec_norm.shape[1] == 0:
+            st.error("❌ Lo spettrogramma è vuoto: l'audio è troppo breve o non contiene dati validi.")
+            return None
+        return mel_spec_norm
     except Exception as e:
-        print(f"BPM estimation error: {e}")
-        return 120.0
-
-def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> dict:
-    """Genera tutte le features audio necessarie"""
-    try:
-        duration = len(y) / sr
-        
-        # Mel-spectrogram per visualizzazioni generali
-        mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, hop_length=512)
-        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
-        
-        # Normalizza mel-spectrogram
-        mel_min, mel_max = float(mel_spec_db.min()), float(mel_spec_db.max())
-        if mel_max != mel_min:
-            mel_norm = (mel_spec_db - mel_min) / (mel_max - mel_min)
-        else:
-            mel_norm = np.zeros_like(mel_spec_db)
-        
-        # STFT per spectrum analyzer
-        stft = librosa.stft(y, hop_length=512, n_fft=2048)
-        magnitude = np.abs(stft)
-        magnitude_db = librosa.amplitude_to_db(magnitude, ref=np.max)
-        
-        # Normalizza STFT
-        mag_min, mag_max = float(magnitude_db.min()), float(magnitude_db.max())
-        if mag_max != mag_min:
-            stft_norm = (magnitude_db - mag_min) / (mag_max - mag_min)
-        else:
-            stft_norm = np.zeros_like(magnitude_db)
-        
-        # RMS energy per linee
-        rms = librosa.feature.rms(y=y, hop_length=512)[0]
-        rms_min, rms_max = float(rms.min()), float(rms.max())
-        rms_norm = (rms - rms_min) / (rms_max - rms_min) if rms_max != rms_min else rms
-        
-        # Beat tracking
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
-        
-        # Converte numpy scalars/arrays a tipi Python standard
-        tempo_val = float(tempo.item()) if hasattr(tempo, 'item') else float(tempo)
-        beats_array = beats.astype(np.float32) if hasattr(beats, 'astype') else beats
-        
-        return {
-            'mel_spectrogram': mel_norm,
-            'stft_magnitude': stft_norm,
-            'rms_energy': rms_norm,
-            'beats': beats_array,
-            'tempo': tempo_val,
-            'hop_length': 512,
-            'sr': sr,
-            'duration': duration
-        }
-    except Exception as e:
-        st.error(f"❌ Errore nell'estrazione features: {e}")
+        st.error(f"❌ Errore nella generazione dello spettrogramma: {str(e)}")
         return None
 
 def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
-    """Converte colore hex in BGR per OpenCV"""
     hex_color = hex_color.lstrip('#')
     lv = len(hex_color)
     rgb = tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
+    # OpenCV usa BGR
     return (rgb[2], rgb[1], rgb[0])
 
-def cleanup_files(*files):
-    """Pulisce i file temporanei"""
-    for file in files:
-        try:
-            if os.path.exists(file):
-                os.remove(file)
-        except Exception:
-            pass
-
 class VideoGenerator:
-    def __init__(self, format_res, level, fps, bg_color, line_color, mode):
-        self.WIDTH, self.HEIGHT = format_res
+    def __init__(self, format_res: Tuple[int, int], level: str, fps: int = 30, bg_color: Tuple[int,int,int]=(255,255,255), line_color: Tuple[int,int,int]=(0,0,0)):
+        self.FRAME_WIDTH, self.FRAME_HEIGHT = format_res
         self.FPS = fps
         self.LEVEL = level
+        self.TEMP_VIDEO = "temp_output.mp4"
+        self.FINAL_VIDEO = "final_output.mp4"
+        self.LINE_DENSITY = 30 if level == "soft" else 40 if level == "medium" else 50
         self.bg_color = bg_color
         self.line_color = line_color
-        self.TEMP_VIDEO = "temp_video.mp4"
-        self.FINAL_VIDEO = "final_video_with_audio.mp4"
-        
-        # Parametri basati sul livello
-        level_params = {
-            "soft": {"density": 20, "sensitivity": 0.6, "thickness": 2},
-            "medium": {"density": 35, "sensitivity": 0.8, "thickness": 3},
-            "hard": {"density": 50, "sensitivity": 1.0, "thickness": 4}
-        }
-        self.params = level_params.get(level, level_params["medium"])
-        self.MODE = mode
 
-    def generate_barcode_frame(self, features: dict, frame_idx: int, beat_intensity: float) -> np.ndarray:
-        """Genera frame barcode - linee verticali che rappresentano le frequenze"""
-        frame = np.ones((self.HEIGHT, self.WIDTH, 3), dtype=np.uint8)
-        frame[:] = self.bg_color
-        
-        # Calcola time index
-        time_idx = min(frame_idx, features['mel_spectrogram'].shape[1] - 1)
-        
-        # Parametri barcode
-        num_bars = min(self.params['density'], self.WIDTH // 4)
-        bar_width = max(1, self.WIDTH // num_bars - 1)
-        
-        for i in range(num_bars):
-            # Mappa su frequenze mel
-            freq_idx = int((i / num_bars) * features['mel_spectrogram'].shape[0])
-            freq_idx = min(freq_idx, features['mel_spectrogram'].shape[0] - 1)
-            
-            # Energia per questa frequenza
-            energy = features['mel_spectrogram'][freq_idx, time_idx]
-            energy *= beat_intensity * self.params['sensitivity']
-            
-            # Calcola altezza barra
-            bar_height = int(energy * self.HEIGHT * 0.8)
-            if bar_height < 5:
-                continue
-                
-            # Posizione
-            x = int(i * (self.WIDTH / num_bars))
-            y_center = self.HEIGHT // 2
-            y_start = y_center - bar_height // 2
-            y_end = y_center + bar_height // 2
-            
-            # Disegna barra
-            cv2.rectangle(frame, (x, y_start), (x + bar_width, y_end), 
-                         self.line_color, -1)
-        
-        return frame
+    def energy_to_color(self, energy: float) -> Tuple[int, int, int]:
+        # Ora il colore è fisso: userà line_color scelto
+        return self.line_color
 
-    def generate_lines_frame(self, features: dict, frame_idx: int, beat_intensity: float) -> np.ndarray:
-        """Genera frame linee - onde che seguono l'energia audio"""
-        frame = np.ones((self.HEIGHT, self.WIDTH, 3), dtype=np.uint8)
-        frame[:] = self.bg_color
-        
-        # Calcola time index
-        time_idx = min(frame_idx, len(features['rms_energy']) - 1)
-        
-        # Numero di linee basato sul livello
-        num_lines = self.params['density'] // 5
-        
-        for line_idx in range(num_lines):
-            # Offset temporale per ogni linea
-            offset = line_idx * 5
-            current_idx = max(0, time_idx - offset)
-            
-            # Energia per questa linea
-            energy = features['rms_energy'][current_idx] if current_idx < len(features['rms_energy']) else 0
-            energy *= beat_intensity * self.params['sensitivity']
-            
-            # Calcola punti della linea ondulata
-            points = []
-            amplitude = int(energy * self.HEIGHT * 0.3)
-            
-            for x in range(0, self.WIDTH, 8):
-                # Onda sinusoidale modulata dall'energia
-                wave = np.sin((x / self.WIDTH) * 4 * np.pi + line_idx) * amplitude
-                y = int(self.HEIGHT // 2 + wave * (1 - line_idx * 0.1))
-                points.append((x, y))
-            
-            # Disegna linea spezzata
-            if len(points) > 1:
-                for i in range(len(points) - 1):
-                    cv2.line(frame, points[i], points[i + 1], 
-                            self.line_color, self.params['thickness'])
-        
-        return frame
+    def draw_connected_network(self, frame, num_nodes, time_index, mel_spec_norm):
+        points = []
+        for _ in range(num_nodes):
+            x = np.random.randint(0, self.FRAME_WIDTH)
+            y = np.random.randint(0, self.FRAME_HEIGHT)
+            points.append((x, y))
+        for i in range(len(points)):
+            for j in range(i+1, len(points)):
+                energy = mel_spec_norm[np.random.randint(0, mel_spec_norm.shape[0]), time_index]
+                if energy > 0.3:
+                    cv2.line(frame, points[i], points[j], self.line_color, 1)
 
-    def generate_spectrum_frame(self, features: dict, frame_idx: int, beat_intensity: float) -> np.ndarray:
-        """Genera frame spectrum - analizzatore di spettro classico"""
-        frame = np.ones((self.HEIGHT, self.WIDTH, 3), dtype=np.uint8)
-        frame[:] = self.bg_color
-        
-        # Calcola time index
-        time_idx = min(frame_idx, features['stft_magnitude'].shape[1] - 1)
-        
-        # Numero di bande di frequenza
-        num_bands = min(self.WIDTH // 8, features['stft_magnitude'].shape[0] // 2)
-        band_width = self.WIDTH // num_bands
-        
-        for i in range(num_bands):
-            # Mappa su frequenze STFT (solo metà inferiore, più interessante)
-            freq_start = int((i / num_bands) * features['stft_magnitude'].shape[0] // 2)
-            freq_end = int(((i + 1) / num_bands) * features['stft_magnitude'].shape[0] // 2)
-            
-            # Media energia per questa banda
-            band_energy = np.mean(features['stft_magnitude'][freq_start:freq_end, time_idx])
-            band_energy *= beat_intensity * self.params['sensitivity']
-            
-            # Altezza barra
-            bar_height = int(band_energy * self.HEIGHT * 0.9)
-            if bar_height < 2:
-                continue
-            
-            # Posizione (dal basso verso l'alto)
-            x_start = i * band_width
-            x_end = x_start + band_width - 1
-            y_start = self.HEIGHT - bar_height
-            y_end = self.HEIGHT
-            
-            # Colore gradiente basato sulla frequenza
-            color_intensity = min(255, int(band_energy * 255))
-            if i < num_bands // 3:  # Bassi - più rosso
-                color = (0, 0, color_intensity)
-            elif i < 2 * num_bands // 3:  # Medi - più verde
-                color = (0, color_intensity, 0)
-            else:  # Alti - più blu
-                color = (color_intensity, 0, 0)
-            
-            # Usa colore personalizzato se non gradiente
-            color = self.line_color
-            
-            # Disegna barra
-            cv2.rectangle(frame, (x_start, y_start), (x_end, y_end), color, -1)
-        
-        return frame
-
-    def calculate_beat_intensity(self, frame_idx: int, features: dict) -> float:
-        """Calcola intensità basata sui beat rilevati"""
+    def generate_video(self, mel_spec_norm: np.ndarray, audio_duration: float, sync_audio: bool = False) -> bool:
         try:
-            beats = features.get('beats', [])
-            if len(beats) == 0:
-                return 1.0
-            
-            # Converti frame in tempo
-            hop_length = features.get('hop_length', 512)
-            sr = features.get('sr', 22050)
-            current_time = frame_idx * (hop_length / sr)
-            
-            # Calcola tempi dei beat
-            beat_times = np.array(beats) * (hop_length / sr)
-            
-            # Trova beat più vicino
-            if len(beat_times) > 0:
-                distances = np.abs(beat_times - current_time)
-                closest_beat_dist = float(np.min(distances))
-            else:
-                closest_beat_dist = 1.0
-            
-            # Intensità inversamente proporzionale alla distanza dal beat
-            beat_window = 0.1  # 100ms window
-            if closest_beat_dist < beat_window:
-                intensity = 1.0 + 0.5 * (1 - closest_beat_dist / beat_window)
-            else:
-                intensity = 1.0
-            
-            return min(1.5, intensity)
-            
-        except Exception as e:
-            print(f"Beat intensity calculation error: {e}")
-            return 1.0
-
-    def generate_video(self, audio_features: dict, audio_file_path: str) -> bool:
-        """Genera video con audio sincronizzato"""
-        video_writer = None
-        try:
-            cleanup_files(self.TEMP_VIDEO, self.FINAL_VIDEO)
-            
-            # Calcola parametri video
-            duration = audio_features['duration']
-            total_frames = int(duration * self.FPS)
-            
-            if total_frames <= 0:
-                st.error("❌ Durata video non valida")
-                return False
-            
-            # Setup video writer
+            for f in [self.TEMP_VIDEO, self.FINAL_VIDEO]:
+                if os.path.exists(f):
+                    os.remove(f)
+            total_frames = int(audio_duration * self.FPS)
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            video_writer = cv2.VideoWriter(self.TEMP_VIDEO, fourcc, self.FPS, 
-                                         (self.WIDTH, self.HEIGHT))
-            
+            video_writer = cv2.VideoWriter(self.TEMP_VIDEO, fourcc, self.FPS, (self.FRAME_WIDTH, self.FRAME_HEIGHT))
             if not video_writer.isOpened():
-                st.error("❌ Impossibile creare video writer")
+                st.error("❌ Impossibile inizializzare il writer video.")
                 return False
-            
             progress_bar = st.progress(0)
             status_text = st.empty()
-            
-            # Genera frames
             for frame_idx in range(total_frames):
                 try:
-                    # Calcola indice temporale per features audio
-                    time_ratio = frame_idx / total_frames
-                    
-                    # Beat intensity
-                    beat_intensity = self.calculate_beat_intensity(frame_idx, audio_features)
-                    
-                    # Genera frame basato sulla modalità
-                    if self.MODE == "Barcode":
-                        frame = self.generate_barcode_frame(audio_features, 
-                                                          int(time_ratio * audio_features['mel_spectrogram'].shape[1]), 
-                                                          beat_intensity)
-                    elif self.MODE == "Lines":
-                        frame = self.generate_lines_frame(audio_features, 
-                                                        int(time_ratio * len(audio_features['rms_energy'])), 
-                                                        beat_intensity)
-                    elif self.MODE == "Spectrum":
-                        frame = self.generate_spectrum_frame(audio_features, 
-                                                           int(time_ratio * audio_features['stft_magnitude'].shape[1]), 
-                                                           beat_intensity)
-                    else:
-                        frame = np.ones((self.HEIGHT, self.WIDTH, 3), dtype=np.uint8) * 128
-                    
+                    frame = np.ones((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8)
+                    frame[:] = self.bg_color  # sfondo colore scelto
+                    time_index = int((frame_idx / total_frames) * mel_spec_norm.shape[1])
+                    time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
+                    self.draw_connected_network(frame, num_nodes=15, time_index=time_index, mel_spec_norm=mel_spec_norm)
                     video_writer.write(frame)
-                    
-                    # Update progress
                     if frame_idx % 10 == 0:
                         progress = (frame_idx + 1) / total_frames
                         progress_bar.progress(progress)
-                        status_text.text(f"Generazione: {frame_idx+1}/{total_frames} frame ({progress*100:.1f}%)")
-                
+                        status_text.text(f"🎬 Generazione frame {frame_idx + 1}/{total_frames} ({progress * 100:.1f}%)")
                 except Exception as e:
-                    st.error(f"❌ Errore frame {frame_idx}: {e}")
-                    return False
-            
+                    st.warning(f"⚠️ Errore nel frame {frame_idx}: {str(e)}")
+                    continue
             video_writer.release()
-            video_writer = None
-            
-            # Combina video con audio usando FFmpeg
-            status_text.text("🔊 Aggiunta audio al video...")
-            
-            if not self._add_audio_to_video(self.TEMP_VIDEO, audio_file_path, self.FINAL_VIDEO):
-                st.error("❌ Errore nell'aggiunta dell'audio")
-                return False
-            
-            status_text.text("✅ Video completato!")
+            progress_bar.progress(1.0)
+            status_text.text("✅ Video generato! Sincronizzazione audio...")
+            if sync_audio:
+                if not check_ffmpeg():
+                    st.warning("⚠️ FFmpeg non trovato. Video senza audio.")
+                    os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
+                    return True
+                try:
+                    cmd = [
+                        "ffmpeg", "-y", "-loglevel", "error",
+                        "-i", self.TEMP_VIDEO,
+                        "-i", "input_audio.wav",
+                        "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
+                        "-c:a", "aac", "-shortest",
+                        self.FINAL_VIDEO
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                    if result.returncode != 0:
+                        st.error(f"❌ Errore FFmpeg: {result.stderr}")
+                        os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
+                    else:
+                        os.remove(self.TEMP_VIDEO)
+                except subprocess.TimeoutExpired:
+                    st.error("❌ Timeout FFmpeg.")
+                    os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
+                except Exception as e:
+                    st.error(f"❌ Errore nella sincronizzazione audio: {str(e)}")
+                    os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
+            else:
+                os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
+            status_text.text("✅ Video completato con successo!")
             return True
-            
         except Exception as e:
-            st.error(f"❌ Errore generazione video: {e}")
+            st.error(f"❌ Errore nella generazione del video: {str(e)}")
             return False
         finally:
-            if video_writer:
+            if 'video_writer' in locals():
                 video_writer.release()
-
-    def _add_audio_to_video(self, video_path: str, audio_path: str, output_path: str) -> bool:
-        """Combina video e audio usando FFmpeg"""
-        try:
-            cmd = [
-                'ffmpeg', '-y',  # Sovrascrivi file esistente
-                '-i', video_path,  # Video input
-                '-i', audio_path,  # Audio input
-                '-c:v', 'libx264',  # Codec video
-                '-c:a', 'aac',      # Codec audio
-                '-strict', 'experimental',
-                '-shortest',        # Taglia al più corto
-                output_path
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            
-            if result.returncode != 0:
-                st.error(f"FFmpeg error: {result.stderr}")
-                return False
-                
-            return os.path.exists(output_path)
-            
-        except subprocess.TimeoutExpired:
-            st.error("❌ Timeout durante la combinazione audio/video")
-            return False
-        except Exception as e:
-            st.error(f"❌ Errore FFmpeg: {e}")
-            return False
+            gc.collect()
 
 def main():
-    st.set_page_config(page_title="🎵 AudioLine by Loop507", layout="centered")
-    st.title("🎵 AudioLine by Loop507")
-    st.markdown("*Trasforma la tua musica in visualizzazioni sincronizzate*")
-    
-    # Verifica FFmpeg
-    if not check_ffmpeg():
-        st.error("❌ **FFmpeg non trovato!** Installa FFmpeg per continuare.")
-        st.markdown("**Come installare FFmpeg:**")
-        st.code("# Ubuntu/Debian:\nsudo apt install ffmpeg\n\n# macOS:\nbrew install ffmpeg\n\n# Windows:\n# Scarica da https://ffmpeg.org/download.html")
-        return
-    
-    uploaded = st.file_uploader("🎧 Carica il tuo file audio", type=["wav", "mp3"])
-    
-    if uploaded:
-        if not validate_audio_file(uploaded):
-            return
-        
-        # Salva file temporaneo
-        temp_audio = f"temp_audio_{uploaded.name}"
-        try:
-            with open(temp_audio, "wb") as f:
-                f.write(uploaded.read())
-            
-            # Processa audio
-            with st.spinner("🔄 Caricamento audio..."):
-                y, sr, duration = load_and_process_audio(temp_audio)
-                
-            if y is None:
-                return
-            
-            # Estrai features audio
-            with st.spinner("📊 Analisi audio completa..."):
-                features = generate_audio_features(y, sr, fps=30)  # Default FPS per analisi
-                
-            if features is None:
-                return
-            
-            # Info audio
-            tempo_val = float(features['tempo']) if hasattr(features['tempo'], 'item') else features['tempo']
-            st.success(f"✅ **Audio elaborato:** {duration:.1f}s | **BPM:** {tempo_val:.1f} | **SR:** {sr}Hz")
-            
-            # Libera memoria
-            del y
-            gc.collect()
-            
-            # Interfaccia controlli
-            st.markdown("### ⚙️ Configurazione Video")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                fmt_key = st.selectbox("📐 **Formato**", list(FORMAT_RESOLUTIONS.keys()), index=0)
-                format_res = FORMAT_RESOLUTIONS[fmt_key]
-                st.caption(f"📏 {format_res[0]}×{format_res[1]} px")
-            
-            with col2:
-                level = st.selectbox("🎨 **Intensità**", ["soft", "medium", "hard"], index=1)
-                level_desc = {"soft": "Delicato", "medium": "Bilanciato", "hard": "Intenso"}
-                st.caption(f"⚡ {level_desc[level]}")
-            
-            with col3:
-                fps = st.selectbox("🎞 **FPS**", [15, 20, 24, 30, 60], index=3)
-                st.caption(f"⏱️ {fps} frame/sec")
-            
-            # Controlli colore
-            col4, col5 = st.columns(2)
-            with col4:
-                bg = st.color_picker("🎨 **Sfondo**", "#000000")
-                st.caption("🖤 Colore di fondo")
-            with col5:
-                line = st.color_picker("🎨 **Elementi**", "#00FF41")
-                st.caption("💚 Colore visualizzazione")
-            
-            # Modalità visualizzazione
-            mode = st.selectbox("✨ **Modalità Visualizzazione**", 
-                               ["Barcode", "Lines", "Spectrum"], index=0)
-            
-            mode_desc = {
-                "Barcode": "📊 Linee verticali per frequenze",
-                "Lines": "〰️ Onde sincronizzate con energia",
-                "Spectrum": "📈 Analizzatore di spettro classico"
-            }
-            st.caption(mode_desc[mode])
-            
-            # Generazione video
-            st.markdown("---")
-            if st.button("🎬 **Genera Video**", type="primary", use_container_width=True):
-                
-                # Rigenera features con FPS corretto
-                with st.spinner("🔄 Ottimizzazione per FPS selezionato..."):
-                    features = generate_audio_features(y if 'y' in locals() else librosa.load(temp_audio)[0], 
-                                                     sr, fps)
-                
-                with st.spinner("🎬 Generazione video in corso..."):
-                    generator = VideoGenerator(
-                        format_res, level, fps, 
-                        hex_to_bgr(bg), hex_to_bgr(line), 
-                        mode
-                    )
-                    
-                    if generator.generate_video(features, temp_audio):
-                        st.balloons()
-                        st.success("🎉 **Video generato con successo!**")
-                        
-                        # Mostra info file
-                        if os.path.exists("final_video_with_audio.mp4"):
-                            file_size = os.path.getsize("final_video_with_audio.mp4") / 1024 / 1024
-                            st.info(f"📁 **Dimensione file:** {file_size:.1f} MB")
-                            
-                            # Download button
-                            with open("final_video_with_audio.mp4", "rb") as video_file:
-                                st.download_button(
-                                    label="⬇️ **Scarica Video Completo**",
-                                    data=video_file,
-                                    file_name=f"audioline_{mode.lower()}_{fmt_key}_{fps}fps.mp4",
-                                    mime="video/mp4",
-                                    type="primary",
-                                    use_container_width=True
-                                )
-                        else:
-                            st.error("❌ File video non trovato dopo la generazione")
-                    
-                    # Cleanup
-                    if 'features' in locals():
-                        del features
-                    gc.collect()
-        
-        except Exception as e:
-            st.error(f"❌ Errore generale: {e}")
-        finally:
-            # Pulizia garantita
-            cleanup_files(temp_audio, "temp_video.mp4", "final_video_with_audio.mp4")
+    FORMAT_RESOLUTIONS = {
+        "16:9": (1280, 720),
+        "9:16": (720, 1280),
+        "1:1": (720, 720),
+        "4:3": (800, 600)
+    }
 
-    # Footer
-    st.markdown("---")
-    st.markdown("🎵 **AudioLine by Loop507** - Trasforma la musica in arte visiva")
-    st.caption("Supporta file MP3/WAV fino a 200MB e 5 minuti")
+    st.set_page_config(page_title="🎵 AudioLinee - by Loop507", layout="centered")
+    st.title("🎨 AudioLinee")
+    st.markdown("### by Loop507")
+    st.markdown("Carica un file audio e genera un video visivo sincronizzato.")
+    
+    uploaded_file = st.file_uploader("🎧 Carica un file audio (.wav o .mp3)", type=["wav", "mp3"])
+    if uploaded_file is not None:
+        if not validate_audio_file(uploaded_file):
+            return
+        with open("input_audio.wav", "wb") as f:
+            f.write(uploaded_file.read())
+        st.success("🔊 Audio caricato correttamente!")
+        
+        y, sr, audio_duration = load_and_process_audio("input_audio.wav")
+        if y is None:
+            return
+        st.info(f"🔊 Durata audio: {audio_duration:.2f} secondi")
+
+        with st.spinner("📊 Analisi audio in corso..."):
+            mel_spec_norm = generate_melspectrogram(y, sr)
+        if mel_spec_norm is None:
+            return
+        st.success("✅ Analisi audio completata!")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            video_format = st.selectbox("📐 Formato video", list(FORMAT_RESOLUTIONS.keys()))
+        with col2:
+            effect_level = st.selectbox("🎨 Livello effetti", ["soft", "medium", "hard"])
+        with col3:
+            fps_choice = st.selectbox("🎞️ Fotogrammi al secondo (FPS)", [10, 15, 24, 30], index=3)
+
+        bg_color_hex = st.color_picker("🎨 Colore sfondo", "#FFFFFF")
+        line_color_hex = st.color_picker("🎨 Colore linee", "#000000")
+
+        # Stima peso video approssimativa
+        bitrate_map = {
+            (1280, 720): {30: 5, 24: 4, 15: 2.5, 10: 1.5},
+            (720, 1280): {30: 5, 24: 4, 15: 2.5, 10: 1.5},
+            (720, 720): {30: 4, 24: 3.5, 15: 2, 10: 1},
+            (800, 600): {30: 3.5, 24: 3, 15: 1.8, 10: 1}
+        }
+        bitrate = bitrate_map.get(FORMAT_RESOLUTIONS[video_format], {}).get(fps_choice, 3)
+        estimated_size_mb = (bitrate * audio_duration) / 8 if audio_duration else 0
+        st.info(f"📦 Stima dimensione video: {estimated_size_mb:.1f} MB")
+
+        sync_audio = st.checkbox("🔊 Sincronizza l'audio nel video")
+        if not check_ffmpeg():
+            st.warning("⚠️ FFmpeg non disponibile - La sincronizzazione audio è disabilitata")
+            sync_audio = False
+
+        if st.button("🎬 Genera Video"):
+            bg_color_bgr = hex_to_bgr(bg_color_hex)
+            line_color_bgr = hex_to_bgr(line_color_hex)
+            generator = VideoGenerator(FORMAT_RESOLUTIONS[video_format], effect_level, fps=fps_choice, bg_color=bg_color_bgr, line_color=line_color_bgr)
+            success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
+            if success and os.path.exists("final_output.mp4"):
+                with open("final_output.mp4", "rb") as f:
+                    st.download_button("⬇️ Scarica il video", f, file_name=f"audiolinee_{video_format}_{effect_level}.mp4", mime="video/mp4")
+                file_size = os.path.getsize("final_output.mp4")
+                st.info(f"📁 Dimensione file: {file_size / 1024 / 1024:.1f} MB")
+            else:
+                st.error("❌ Si è verificato un errore nella generazione del video.")
+
+        if st.button("🧹 Pulisci file temporanei"):
+            temp_files = ["input_audio.wav", "temp_output.mp4", "final_output.mp4"]
+            for f in temp_files:
+                if os.path.exists(f):
+                    os.remove(f)
+            st.success("✅ File temporanei eliminati!")
 
 if __name__ == "__main__":
     main()
