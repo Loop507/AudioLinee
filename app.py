@@ -1,4 +1,4 @@
-# 🎵 AudioLinee.py (versione corretta con gestione BPM robusta e cast sicuro)
+# 🎵 AudioLinee.py (versione corretta con import completi e gestione BPM robusta)
 import streamlit as st
 import numpy as np
 import cv2
@@ -6,6 +6,7 @@ import librosa
 import subprocess
 import gc
 import shutil
+import os
 from typing import Tuple, Optional
 
 MAX_DURATION = 300  # 5 minuti massimo
