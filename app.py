@@ -111,21 +111,20 @@ def generate_video(format="1:1", level="medium", sync_audio=False):
 
     # Calcola la durata massima dell'audio in secondi
     AUDIO_DURATION = mel_spec_norm.shape[1] / (sr / float(FPS))
-    MAX_FRAMES = min(int(FPS * DURATION_SECONDS), mel_spec_norm.shape[1])
-
+    total_frames = min(int(FPS * DURATION_SECONDS), mel_spec_norm.shape[1])
     st.info(f"🔊 Durata audio: {AUDIO_DURATION:.2f} secondi → Limiterò il video a questa durata.")
 
-    for frame_idx in range(int(FPS * DURATION_SECONDS)):
+    for frame_idx in range(total_frames):
         frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
 
-        if frame_idx >= mel_spec_norm.shape[1]:
-            # Se l'audio finisce prima del video, disegna un frame nero
-            video_writer.write(frame)
-            continue
+        # Calcolo time_index con protezione completa
+        time_index_float = frame_idx / (FPS * DURATION_SECONDS) * mel_spec_norm.shape[1]
+        time_index = int(time_index_float)
 
-        # Calcolo time_index con protezione
-        time_index = int(frame_idx / (FPS * DURATION_SECONDS) * mel_spec_norm.shape[1])
-        time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
+        if time_index >= mel_spec_norm.shape[1]:
+            time_index = mel_spec_norm.shape[1] - 1
+        elif time_index < 0:
+            time_index = 0
 
         # Linee verticali
         for i in range(LINE_DENSITY):
