@@ -1,4 +1,4 @@
-# 🎵 AudioLinee.py (by Loop507) - Versione Modificata con linee audio-reactive
+# 🎵 AudioLinee.py (by Loop507) - Versione Ibrida Frequenze Visibili
 import streamlit as st
 import numpy as np
 import cv2
@@ -9,9 +9,9 @@ import gc
 import shutil
 from typing import Tuple, Optional
 
-MAX_DURATION = 300  # 5 minuti massimo
-MIN_DURATION = 1.0  # 1 secondo minimo
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_DURATION = 300
+MIN_DURATION = 1.0
+MAX_FILE_SIZE = 50 * 1024 * 1024
 
 def check_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
@@ -71,42 +71,39 @@ class VideoGenerator:
         self.LEVEL = level
         self.TEMP_VIDEO = "temp_output.mp4"
         self.FINAL_VIDEO = "final_output.mp4"
-        self.LINE_DENSITY = 30 if level == "soft" else 40 if level == "medium" else 50
-
-    def energy_to_color(self, energy: float) -> Tuple[int, int, int]:
-        return (0, 0, 0)  # Nero puro per stile a china
 
     def draw_connected_network(self, frame, time_index, mel_spec_norm):
         n_mels = mel_spec_norm.shape[0]
         freq_energies = mel_spec_norm[:, time_index]
         height_step = self.FRAME_HEIGHT / n_mels
 
-        volume = np.mean(freq_energies)  # volume complessivo
-        volume_threshold = 0.1  # soglia minima volume per iniziare a disegnare
-
-        if volume < volume_threshold:
-            # volume troppo basso: niente linee
+        volume = np.mean(freq_energies)
+        if volume < 0.1:
             return
+
+        max_points = 20
+        energy_indices = np.argsort(freq_energies)[::-1]
+        selected_indices = energy_indices[:max_points]
 
         points = []
         thicknesses = []
 
-        for i in range(n_mels):
+        for i in selected_indices:
             energy = freq_energies[i]
-            if energy > 0.05:  # soglia minima energia locale
-                x = int(np.interp(energy, [0, 1], [0, self.FRAME_WIDTH]))
-                y = int(i * height_step + height_step / 2)
-                points.append((x, y))
-                # spessore proporzionale all’energia locale, da 1 a 5
-                thickness = int(np.interp(energy, [0, 1], [1, 5]))
-                thicknesses.append(thickness)
+            if energy < 0.05:
+                continue
+            x = int(np.interp(energy, [0, 1], [0, self.FRAME_WIDTH]))
+            y = int(i * height_step + height_step / 2)
+            points.append((x, y))
+            thickness = int(np.interp(energy, [0, 1], [1, 4]))
+            thicknesses.append(thickness)
 
-        # Disegna linee tra i punti con spessore basato sull’energia locale
         for i in range(len(points)):
             for j in range(i + 1, len(points)):
-                # spessore linea = max spessore dei due punti collegati
-                line_thickness = max(thicknesses[i], thicknesses[j])
-                cv2.line(frame, points[i], points[j], (0, 0, 0), line_thickness)
+                dist = np.linalg.norm(np.array(points[i]) - np.array(points[j]))
+                if dist < self.FRAME_WIDTH * 0.3:
+                    line_thickness = max(thicknesses[i], thicknesses[j])
+                    cv2.line(frame, points[i], points[j], (0, 0, 0), line_thickness)
 
     def generate_video(self, mel_spec_norm: np.ndarray, audio_duration: float, sync_audio: bool = False) -> bool:
         try:
@@ -122,19 +119,15 @@ class VideoGenerator:
             progress_bar = st.progress(0)
             status_text = st.empty()
             for frame_idx in range(total_frames):
-                try:
-                    frame = np.ones((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8) * 255  # sfondo bianco
-                    time_index = int((frame_idx / total_frames) * mel_spec_norm.shape[1])
-                    time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
-                    self.draw_connected_network(frame, time_index=time_index, mel_spec_norm=mel_spec_norm)
-                    video_writer.write(frame)
-                    if frame_idx % 10 == 0:
-                        progress = (frame_idx + 1) / total_frames
-                        progress_bar.progress(progress)
-                        status_text.text(f"🎬 Generazione frame {frame_idx + 1}/{total_frames} ({progress * 100:.1f}%)")
-                except Exception as e:
-                    st.warning(f"⚠️ Errore nel frame {frame_idx}: {str(e)}")
-                    continue
+                frame = np.ones((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8) * 255
+                time_index = int((frame_idx / total_frames) * mel_spec_norm.shape[1])
+                time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
+                self.draw_connected_network(frame, time_index, mel_spec_norm)
+                video_writer.write(frame)
+                if frame_idx % 10 == 0:
+                    progress = (frame_idx + 1) / total_frames
+                    progress_bar.progress(progress)
+                    status_text.text(f"🎬 Generazione frame {frame_idx + 1}/{total_frames} ({progress * 100:.1f}%)")
             video_writer.release()
             progress_bar.progress(1.0)
             status_text.text("✅ Video generato! Sincronizzazione audio...")
@@ -211,9 +204,7 @@ def main():
             success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
             if success and os.path.exists("final_output.mp4"):
                 with open("final_output.mp4", "rb") as f:
-                    st.download_button("⬇️ Scarica il video", f,
-                                       file_name=f"audiolinee_{video_format}_{effect_level}.mp4",
-                                       mime="video/mp4")
+                    st.download_button("⬇️ Scarica il video", f, file_name=f"audiolinee_{video_format}_{effect_level}.mp4", mime="video/mp4")
                 file_size = os.path.getsize("final_output.mp4")
                 st.info(f"📁 Dimensione file: {file_size / 1024 / 1024:.1f} MB")
             else:
