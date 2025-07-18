@@ -11,6 +11,7 @@ import matplotlib.colors as colors
 import os
 import subprocess
 import gc
+import shutil
 from typing import Tuple, Optional
 
 # Configurazione pagina
@@ -23,6 +24,10 @@ st.markdown("Carica un file audio e genera un video visivo sincronizzato.")
 MAX_DURATION = 300  # 5 minuti massimo
 MIN_DURATION = 1.0  # 1 secondo minimo
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+def check_ffmpeg() -> bool:
+    """Verifica se FFmpeg è disponibile nel sistema"""
+    return shutil.which("ffmpeg") is not None
 
 def validate_audio_file(uploaded_file) -> bool:
     """Valida il file audio caricato"""
@@ -285,6 +290,12 @@ class VideoGenerator:
             
             # Sincronizza l'audio al video se richiesto
             if sync_audio:
+                if not check_ffmpeg():
+                    st.warning("⚠️ FFmpeg non trovato. Video generato senza audio sincronizzato.")
+                    os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
+                    status_text.text("✅ Video completato (senza audio)!")
+                    return True
+                
                 try:
                     cmd = [
                         "ffmpeg", "-y", "-loglevel", "error",
@@ -296,16 +307,24 @@ class VideoGenerator:
                         "-shortest",  # Usa la durata più breve
                         self.FINAL_VIDEO
                     ]
-                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                     
                     if result.returncode != 0:
                         st.error(f"❌ Errore FFmpeg: {result.stderr}")
-                        return False
+                        st.info("📁 Video senza audio salvato comunque.")
+                        os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
+                        return True
                     
                     os.remove(self.TEMP_VIDEO)
+                except subprocess.TimeoutExpired:
+                    st.error("❌ Timeout FFmpeg. Video troppo lungo per la sincronizzazione.")
+                    os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
+                    return True
                 except Exception as e:
                     st.error(f"❌ Errore nella sincronizzazione audio: {str(e)}")
-                    return False
+                    st.info("📁 Video senza audio salvato comunque.")
+                    os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
+                    return True
             else:
                 os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
             
@@ -367,6 +386,12 @@ def main():
             effect_level = st.selectbox("🎨 Livello effetti", ["soft", "medium", "hard"])
         
         sync_audio = st.checkbox("🔊 Sincronizza l'audio nel video")
+        
+        # Avviso se FFmpeg non è disponibile
+        if not check_ffmpeg():
+            st.warning("⚠️ **FFmpeg non disponibile** - La sincronizzazione audio è disabilitata")
+            st.info("💡 Per abilitare l'audio: installa FFmpeg o crea un file `packages.txt` con `ffmpeg`")
+            sync_audio = False
         
         if st.button("🎬 Genera Video"):
             # Crea il generatore video
