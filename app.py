@@ -1,7 +1,3 @@
-# 🎵 AudioLinee.py (by Loop507) - Versione HD Ottimizzata
-# Generatore di video visivi sincronizzati con l'audio
-# Realizzato con Streamlit - Funziona online su Streamlit Cloud
-
 import streamlit as st
 import numpy as np
 import cv2
@@ -27,9 +23,7 @@ def validate_audio_file(uploaded_file) -> bool:
 
 def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Optional[int], Optional[float]]:
     try:
-        y, sr = librosa.load(file_path, sr=None)
-        if len(y.shape) > 1:
-            y = librosa.to_mono(y)
+        y, sr = librosa.load(file_path, sr=None, mono=True)
         if len(y) == 0:
             st.error("❌ Il file audio è vuoto o non è stato caricato correttamente.")
             return None, None, None
@@ -67,17 +61,27 @@ def generate_melspectrogram(y: np.ndarray, sr: int) -> Optional[np.ndarray]:
         st.error(f"❌ Errore nella generazione dello spettrogramma: {str(e)}")
         return None
 
+def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
+    hex_color = hex_color.lstrip('#')
+    lv = len(hex_color)
+    rgb = tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
+    # OpenCV usa BGR
+    return (rgb[2], rgb[1], rgb[0])
+
 class VideoGenerator:
-    def __init__(self, format_res: Tuple[int, int], level: str, fps: int = 30):
+    def __init__(self, format_res: Tuple[int, int], level: str, fps: int = 30, bg_color: Tuple[int,int,int]=(255,255,255), line_color: Tuple[int,int,int]=(0,0,0)):
         self.FRAME_WIDTH, self.FRAME_HEIGHT = format_res
         self.FPS = fps
         self.LEVEL = level
         self.TEMP_VIDEO = "temp_output.mp4"
         self.FINAL_VIDEO = "final_output.mp4"
         self.LINE_DENSITY = 30 if level == "soft" else 40 if level == "medium" else 50
+        self.bg_color = bg_color
+        self.line_color = line_color
 
     def energy_to_color(self, energy: float) -> Tuple[int, int, int]:
-        return (0, 0, 0)  # Nero
+        # Ora il colore è fisso: userà line_color scelto
+        return self.line_color
 
     def draw_connected_network(self, frame, num_nodes, time_index, mel_spec_norm):
         points = []
@@ -89,7 +93,7 @@ class VideoGenerator:
             for j in range(i+1, len(points)):
                 energy = mel_spec_norm[np.random.randint(0, mel_spec_norm.shape[0]), time_index]
                 if energy > 0.3:
-                    cv2.line(frame, points[i], points[j], (0, 0, 0), 1)
+                    cv2.line(frame, points[i], points[j], self.line_color, 1)
 
     def generate_video(self, mel_spec_norm: np.ndarray, audio_duration: float, sync_audio: bool = False) -> bool:
         try:
@@ -106,7 +110,8 @@ class VideoGenerator:
             status_text = st.empty()
             for frame_idx in range(total_frames):
                 try:
-                    frame = np.ones((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8) * 255
+                    frame = np.ones((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8)
+                    frame[:] = self.bg_color  # sfondo colore scelto
                     time_index = int((frame_idx / total_frames) * mel_spec_norm.shape[1])
                     time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
                     self.draw_connected_network(frame, num_nodes=15, time_index=time_index, mel_spec_norm=mel_spec_norm)
@@ -127,7 +132,14 @@ class VideoGenerator:
                     os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
                     return True
                 try:
-                    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", self.TEMP_VIDEO, "-i", "input_audio.wav", "-c:v", "copy", "-c:a", "aac", "-shortest", self.FINAL_VIDEO]
+                    cmd = [
+                        "ffmpeg", "-y", "-loglevel", "error",
+                        "-i", self.TEMP_VIDEO,
+                        "-i", "input_audio.wav",
+                        "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
+                        "-c:a", "aac", "-shortest",
+                        self.FINAL_VIDEO
+                    ]
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                     if result.returncode != 0:
                         st.error(f"❌ Errore FFmpeg: {result.stderr}")
@@ -154,17 +166,17 @@ class VideoGenerator:
 
 def main():
     FORMAT_RESOLUTIONS = {
-        "16:9 (HD)": (1280, 720),
-        "9:16 (Verticale)": (720, 1280),
-        "1:1 (Quadrato)": (720, 720),
-        "4:3 (Classico)": (800, 600)
+        "16:9": (1280, 720),
+        "9:16": (720, 1280),
+        "1:1": (720, 720),
+        "4:3": (800, 600)
     }
 
     st.set_page_config(page_title="🎵 AudioLinee - by Loop507", layout="centered")
     st.title("🎨 AudioLinee")
     st.markdown("### by Loop507")
     st.markdown("Carica un file audio e genera un video visivo sincronizzato.")
-
+    
     uploaded_file = st.file_uploader("🎧 Carica un file audio (.wav o .mp3)", type=["wav", "mp3"])
     if uploaded_file is not None:
         if not validate_audio_file(uploaded_file):
@@ -172,7 +184,7 @@ def main():
         with open("input_audio.wav", "wb") as f:
             f.write(uploaded_file.read())
         st.success("🔊 Audio caricato correttamente!")
-
+        
         y, sr, audio_duration = load_and_process_audio("input_audio.wav")
         if y is None:
             return
@@ -184,11 +196,27 @@ def main():
             return
         st.success("✅ Analisi audio completata!")
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             video_format = st.selectbox("📐 Formato video", list(FORMAT_RESOLUTIONS.keys()))
         with col2:
             effect_level = st.selectbox("🎨 Livello effetti", ["soft", "medium", "hard"])
+        with col3:
+            fps_choice = st.selectbox("🎞️ Fotogrammi al secondo (FPS)", [10, 15, 24, 30], index=3)
+
+        bg_color_hex = st.color_picker("🎨 Colore sfondo", "#FFFFFF")
+        line_color_hex = st.color_picker("🎨 Colore linee", "#000000")
+
+        # Stima peso video approssimativa
+        bitrate_map = {
+            (1280, 720): {30: 5, 24: 4, 15: 2.5, 10: 1.5},
+            (720, 1280): {30: 5, 24: 4, 15: 2.5, 10: 1.5},
+            (720, 720): {30: 4, 24: 3.5, 15: 2, 10: 1},
+            (800, 600): {30: 3.5, 24: 3, 15: 1.8, 10: 1}
+        }
+        bitrate = bitrate_map.get(FORMAT_RESOLUTIONS[video_format], {}).get(fps_choice, 3)
+        estimated_size_mb = (bitrate * audio_duration) / 8 if audio_duration else 0
+        st.info(f"📦 Stima dimensione video: {estimated_size_mb:.1f} MB")
 
         sync_audio = st.checkbox("🔊 Sincronizza l'audio nel video")
         if not check_ffmpeg():
@@ -196,7 +224,9 @@ def main():
             sync_audio = False
 
         if st.button("🎬 Genera Video"):
-            generator = VideoGenerator(FORMAT_RESOLUTIONS[video_format], effect_level)
+            bg_color_bgr = hex_to_bgr(bg_color_hex)
+            line_color_bgr = hex_to_bgr(line_color_hex)
+            generator = VideoGenerator(FORMAT_RESOLUTIONS[video_format], effect_level, fps=fps_choice, bg_color=bg_color_bgr, line_color=line_color_bgr)
             success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
             if success and os.path.exists("final_output.mp4"):
                 with open("final_output.mp4", "rb") as f:
