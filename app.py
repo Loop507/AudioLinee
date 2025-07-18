@@ -1,4 +1,4 @@
-# 🎵 AudioLinee.py (versione corretta con gestione BPM robusta)
+# 🎵 AudioLinee.py (versione corretta con gestione BPM robusta e cast sicuro)
 import streamlit as st
 import numpy as np
 import cv2
@@ -192,6 +192,11 @@ def main():
             return
 
         bpm = get_bpm(y, sr)
+        try:
+            bpm = float(bpm)
+        except (TypeError, ValueError):
+            bpm = 90.0  # valore di default sicuro
+
         fps = int(np.clip((bpm / 90) * 30, 15, 60))
         st.info(f"🎵 BPM stimati: {bpm:.1f}, FPS impostati: {fps}")
         st.info(f"🔊 Durata audio: {audio_duration:.2f} secondi")
