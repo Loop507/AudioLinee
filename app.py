@@ -6,7 +6,6 @@ import cv2
 import tempfile
 import os
 import librosa
-import moviepy.editor as mp
 from PIL import Image
 from scipy.signal import find_peaks
 
@@ -14,7 +13,7 @@ st.set_page_config(page_title="🎞️ AudioLinee", layout="wide")
 
 # --- Impostazioni colore ---
 line_color = st.color_picker("🎨 Colore delle linee", "#000000")
-background_color = st.color_picker("🖼️ Colore dello sfondo", "#FFFFFF")
+background_color = st.color_picker("🎼 Colore dello sfondo", "#FFFFFF")
 
 # --- Impostazioni FPS ---
 fps_option = st.selectbox("🎥 FPS del video", [5, 10, 15, 24, 30, 60, 72], index=3)
@@ -66,7 +65,7 @@ def hex_to_bgr(hex_color):
 # --- MAIN ---
 def main():
     st.title("🎵 AudioLinee")
-    audio_file = st.file_uploader("🎧 Carica un file audio", type=[".mp3", ".wav"])
+    audio_file = st.file_uploader("🏋️ Carica un file audio", type=[".mp3", ".wav"])
 
     if audio_file:
         st.audio(audio_file)
