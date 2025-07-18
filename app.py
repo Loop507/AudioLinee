@@ -1,17 +1,22 @@
-# 🎵 AudioLinee.py (by Loop507) - Versione Ibrida Frequenze Visibili
+# 🎵 AudioLinee.py (by Loop507) - Versione con effetto PAN stereo
+# Generatore di video visivi sincronizzati con l'audio
+# Realizzato con Streamlit - Funziona online su Streamlit Cloud
+
 import streamlit as st
 import numpy as np
 import cv2
 import librosa
+import matplotlib.cm as cm
+import matplotlib.colors as colors
 import os
 import subprocess
 import gc
 import shutil
 from typing import Tuple, Optional
 
-MAX_DURATION = 300
-MIN_DURATION = 1.0
-MAX_FILE_SIZE = 50 * 1024 * 1024
+MAX_DURATION = 300  # 5 minuti massimo
+MIN_DURATION = 1.0  # 1 secondo minimo
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 def check_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
@@ -21,6 +26,16 @@ def validate_audio_file(uploaded_file) -> bool:
         st.error(f"❌ File troppo grande ({uploaded_file.size / 1024 / 1024:.1f}MB). Limite: {MAX_FILE_SIZE / 1024 / 1024:.1f}MB")
         return False
     return True
+
+def load_audio_stereo(file_path: str):
+    try:
+        y, sr = librosa.load(file_path, sr=None, mono=False)
+        if y.ndim == 1:
+            y = np.array([y, y])
+        return y, sr
+    except Exception as e:
+        st.warning(f"⚠️ Errore nel caricamento stereo: {str(e)}")
+        return None, None
 
 def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Optional[int], Optional[float]]:
     try:
@@ -71,39 +86,31 @@ class VideoGenerator:
         self.LEVEL = level
         self.TEMP_VIDEO = "temp_output.mp4"
         self.FINAL_VIDEO = "final_output.mp4"
+        self.LINE_DENSITY = 30 if level == "soft" else 40 if level == "medium" else 50
+        self.pan_data = None
 
-    def draw_connected_network(self, frame, time_index, mel_spec_norm):
-        n_mels = mel_spec_norm.shape[0]
-        freq_energies = mel_spec_norm[:, time_index]
-        height_step = self.FRAME_HEIGHT / n_mels
+    def set_pan_data(self, pan_data):
+        self.pan_data = pan_data
 
-        volume = np.mean(freq_energies)
-        if volume < 0.1:
-            return
-
-        max_points = 20
-        energy_indices = np.argsort(freq_energies)[::-1]
-        selected_indices = energy_indices[:max_points]
-
+    def draw_connected_network(self, frame, num_nodes, time_index, mel_spec_norm):
         points = []
-        thicknesses = []
-
-        for i in selected_indices:
-            energy = freq_energies[i]
-            if energy < 0.05:
-                continue
-            x = int(np.interp(energy, [0, 1], [0, self.FRAME_WIDTH]))
-            y = int(i * height_step + height_step / 2)
+        for _ in range(num_nodes):
+            freq_band = np.random.randint(0, mel_spec_norm.shape[0])
+            energy = mel_spec_norm[freq_band, time_index]
+            # Pan: da -1 (left) a +1 (right)
+            pan_shift = 0
+            if self.pan_data is not None:
+                pan_val = self.pan_data[freq_band, time_index]
+                pan_shift = int(pan_val * self.FRAME_WIDTH * 0.25)
+            x = np.random.randint(0, self.FRAME_WIDTH) + pan_shift
+            x = np.clip(x, 0, self.FRAME_WIDTH - 1)
+            y = np.random.randint(0, self.FRAME_HEIGHT)
             points.append((x, y))
-            thickness = int(np.interp(energy, [0, 1], [1, 4]))
-            thicknesses.append(thickness)
-
         for i in range(len(points)):
-            for j in range(i + 1, len(points)):
-                dist = np.linalg.norm(np.array(points[i]) - np.array(points[j]))
-                if dist < self.FRAME_WIDTH * 0.3:
-                    line_thickness = max(thicknesses[i], thicknesses[j])
-                    cv2.line(frame, points[i], points[j], (0, 0, 0), line_thickness)
+            for j in range(i+1, len(points)):
+                energy = mel_spec_norm[np.random.randint(0, mel_spec_norm.shape[0]), time_index]
+                if energy > 0.3:
+                    cv2.line(frame, points[i], points[j], (0, 0, 0), 1)
 
     def generate_video(self, mel_spec_norm: np.ndarray, audio_duration: float, sync_audio: bool = False) -> bool:
         try:
@@ -119,15 +126,19 @@ class VideoGenerator:
             progress_bar = st.progress(0)
             status_text = st.empty()
             for frame_idx in range(total_frames):
-                frame = np.ones((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8) * 255
-                time_index = int((frame_idx / total_frames) * mel_spec_norm.shape[1])
-                time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
-                self.draw_connected_network(frame, time_index, mel_spec_norm)
-                video_writer.write(frame)
-                if frame_idx % 10 == 0:
-                    progress = (frame_idx + 1) / total_frames
-                    progress_bar.progress(progress)
-                    status_text.text(f"🎬 Generazione frame {frame_idx + 1}/{total_frames} ({progress * 100:.1f}%)")
+                try:
+                    frame = np.ones((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8) * 255
+                    time_index = int((frame_idx / total_frames) * mel_spec_norm.shape[1])
+                    time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
+                    self.draw_connected_network(frame, num_nodes=15, time_index=time_index, mel_spec_norm=mel_spec_norm)
+                    video_writer.write(frame)
+                    if frame_idx % 10 == 0:
+                        progress = (frame_idx + 1) / total_frames
+                        progress_bar.progress(progress)
+                        status_text.text(f"🎬 Generazione frame {frame_idx + 1}/{total_frames} ({progress * 100:.1f}%)")
+                except Exception as e:
+                    st.warning(f"⚠️ Errore nel frame {frame_idx}: {str(e)}")
+                    continue
             video_writer.release()
             progress_bar.progress(1.0)
             status_text.text("✅ Video generato! Sincronizzazione audio...")
@@ -137,8 +148,7 @@ class VideoGenerator:
                     os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
                     return True
                 try:
-                    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", self.TEMP_VIDEO, "-i", "input_audio.wav",
-                           "-c:v", "copy", "-c:a", "aac", "-strict", "experimental", "-shortest", self.FINAL_VIDEO]
+                    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", self.TEMP_VIDEO, "-i", "input_audio.wav", "-c:v", "copy", "-c:a", "aac", "-strict", "experimental", "-shortest", self.FINAL_VIDEO]
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                     if result.returncode != 0:
                         st.error(f"❌ Errore FFmpeg: {result.stderr}")
@@ -184,6 +194,13 @@ def main():
         y, sr, audio_duration = load_and_process_audio("input_audio.wav")
         if y is None:
             return
+        stereo_y, _ = load_audio_stereo("input_audio.wav")
+        if stereo_y is not None:
+            mel_l = librosa.feature.melspectrogram(y=stereo_y[0], sr=sr, n_mels=128, fmax=sr/2)
+            mel_r = librosa.feature.melspectrogram(y=stereo_y[1], sr=sr, n_mels=128, fmax=sr/2)
+            pan_data = (mel_r - mel_l) / (mel_l + mel_r + 1e-6)
+        else:
+            pan_data = None
         st.info(f"🔊 Durata audio: {audio_duration:.2f} secondi")
         with st.spinner("📊 Analisi audio in corso..."):
             mel_spec_norm = generate_melspectrogram(y, sr)
@@ -201,6 +218,7 @@ def main():
             sync_audio = False
         if st.button("🎬 Genera Video"):
             generator = VideoGenerator(FORMAT_RESOLUTIONS[video_format], effect_level)
+            generator.set_pan_data(pan_data)
             success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
             if success and os.path.exists("final_output.mp4"):
                 with open("final_output.mp4", "rb") as f:
