@@ -1,13 +1,8 @@
-# 🎵 AudioLinee.py (by Loop507) - Versione Corretta
-# Generatore di video visivi sincronizzati con l'audio
-# Realizzato con Streamlit - Funziona online su Streamlit Cloud
-
+# 🎵 AudioLinee.py (by Loop507) - Versione Modificata con linee audio-reactive
 import streamlit as st
 import numpy as np
 import cv2
 import librosa
-import matplotlib.cm as cm
-import matplotlib.colors as colors
 import os
 import subprocess
 import gc
@@ -81,17 +76,37 @@ class VideoGenerator:
     def energy_to_color(self, energy: float) -> Tuple[int, int, int]:
         return (0, 0, 0)  # Nero puro per stile a china
 
-    def draw_connected_network(self, frame, num_nodes, time_index, mel_spec_norm):
+    def draw_connected_network(self, frame, time_index, mel_spec_norm):
+        n_mels = mel_spec_norm.shape[0]
+        freq_energies = mel_spec_norm[:, time_index]
+        height_step = self.FRAME_HEIGHT / n_mels
+
+        volume = np.mean(freq_energies)  # volume complessivo
+        volume_threshold = 0.1  # soglia minima volume per iniziare a disegnare
+
+        if volume < volume_threshold:
+            # volume troppo basso: niente linee
+            return
+
         points = []
-        for _ in range(num_nodes):
-            x = np.random.randint(0, self.FRAME_WIDTH)
-            y = np.random.randint(0, self.FRAME_HEIGHT)
-            points.append((x, y))
+        thicknesses = []
+
+        for i in range(n_mels):
+            energy = freq_energies[i]
+            if energy > 0.05:  # soglia minima energia locale
+                x = int(np.interp(energy, [0, 1], [0, self.FRAME_WIDTH]))
+                y = int(i * height_step + height_step / 2)
+                points.append((x, y))
+                # spessore proporzionale all’energia locale, da 1 a 5
+                thickness = int(np.interp(energy, [0, 1], [1, 5]))
+                thicknesses.append(thickness)
+
+        # Disegna linee tra i punti con spessore basato sull’energia locale
         for i in range(len(points)):
-            for j in range(i+1, len(points)):
-                energy = mel_spec_norm[np.random.randint(0, mel_spec_norm.shape[0]), time_index]
-                if energy > 0.3:
-                    cv2.line(frame, points[i], points[j], (0, 0, 0), 1)
+            for j in range(i + 1, len(points)):
+                # spessore linea = max spessore dei due punti collegati
+                line_thickness = max(thicknesses[i], thicknesses[j])
+                cv2.line(frame, points[i], points[j], (0, 0, 0), line_thickness)
 
     def generate_video(self, mel_spec_norm: np.ndarray, audio_duration: float, sync_audio: bool = False) -> bool:
         try:
@@ -111,7 +126,7 @@ class VideoGenerator:
                     frame = np.ones((self.FRAME_HEIGHT, self.FRAME_WIDTH, 3), dtype=np.uint8) * 255  # sfondo bianco
                     time_index = int((frame_idx / total_frames) * mel_spec_norm.shape[1])
                     time_index = max(0, min(time_index, mel_spec_norm.shape[1] - 1))
-                    self.draw_connected_network(frame, num_nodes=15, time_index=time_index, mel_spec_norm=mel_spec_norm)
+                    self.draw_connected_network(frame, time_index=time_index, mel_spec_norm=mel_spec_norm)
                     video_writer.write(frame)
                     if frame_idx % 10 == 0:
                         progress = (frame_idx + 1) / total_frames
@@ -129,7 +144,8 @@ class VideoGenerator:
                     os.rename(self.TEMP_VIDEO, self.FINAL_VIDEO)
                     return True
                 try:
-                    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", self.TEMP_VIDEO, "-i", "input_audio.wav", "-c:v", "copy", "-c:a", "aac", "-strict", "experimental", "-shortest", self.FINAL_VIDEO]
+                    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", self.TEMP_VIDEO, "-i", "input_audio.wav",
+                           "-c:v", "copy", "-c:a", "aac", "-strict", "experimental", "-shortest", self.FINAL_VIDEO]
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                     if result.returncode != 0:
                         st.error(f"❌ Errore FFmpeg: {result.stderr}")
@@ -195,7 +211,9 @@ def main():
             success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
             if success and os.path.exists("final_output.mp4"):
                 with open("final_output.mp4", "rb") as f:
-                    st.download_button("⬇️ Scarica il video", f, file_name=f"audiolinee_{video_format}_{effect_level}.mp4", mime="video/mp4")
+                    st.download_button("⬇️ Scarica il video", f,
+                                       file_name=f"audiolinee_{video_format}_{effect_level}.mp4",
+                                       mime="video/mp4")
                 file_size = os.path.getsize("final_output.mp4")
                 st.info(f"📁 Dimensione file: {file_size / 1024 / 1024:.1f} MB")
             else:
