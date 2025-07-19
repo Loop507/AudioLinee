@@ -1,3 +1,5 @@
+# 🎵 AudioLinee - by Loop507 - Versione Estesa con Effetti e Colori per Frequenze
+
 import streamlit as st
 import numpy as np
 import cv2
@@ -7,19 +9,23 @@ import subprocess
 import gc
 import shutil
 from typing import Tuple, Optional
+from scipy.ndimage import uniform_filter1d  # <--- AGGIUNTO PER SMOOTHING
 
 MAX_DURATION = 300
 MIN_DURATION = 1.0
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
+
 def check_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
+
 
 def validate_audio_file(uploaded_file) -> bool:
     if uploaded_file.size > MAX_FILE_SIZE:
         st.error(f"❌ File troppo grande ({uploaded_file.size / 1024 / 1024:.1f}MB). Limite: {MAX_FILE_SIZE / 1024 / 1024:.1f}MB")
         return False
     return True
+
 
 def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Optional[int], Optional[float]]:
     try:
@@ -40,6 +46,7 @@ def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Option
         st.error(f"❌ Errore nel caricamento dell'audio: {str(e)}")
         return None, None, None
 
+
 def generate_melspectrogram(y: np.ndarray, sr: int) -> Optional[np.ndarray]:
     try:
         S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=sr / 2)
@@ -56,16 +63,23 @@ def generate_melspectrogram(y: np.ndarray, sr: int) -> Optional[np.ndarray]:
         if mel_spec_norm.shape[1] == 0:
             st.error("❌ Lo spettrogramma è vuoto: l'audio è troppo breve o non contiene dati validi.")
             return None
+        mel_spec_norm = smooth_mel(mel_spec_norm, smoothing=5)  # <--- SMOOTHING INSERITO QUI
         return mel_spec_norm
     except Exception as e:
         st.error(f"❌ Errore nella generazione dello spettrogramma: {str(e)}")
         return None
+
+
+def smooth_mel(mel, smoothing=5):
+    return uniform_filter1d(mel, size=smoothing, axis=1)
+
 
 def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
     hex_color = hex_color.lstrip('#')
     lv = len(hex_color)
     rgb = tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
     return (rgb[2], rgb[1], rgb[0])
+
 
 class VideoGenerator:
     def __init__(self, format_res, level, fps=30, bg_color=(255, 255, 255), freq_colors=None, effect_mode="connessioni"):
@@ -100,40 +114,26 @@ class VideoGenerator:
                     thick = int(1 + val * 4)
                     cv2.line(frame, pts[i], pts[j], color, thick)
 
-    def draw_rectangular_grid(self, frame, mel, idx):
-        rows, cols = 5, 5
-        margin_x = self.W // (cols + 1)
-        margin_y = self.H // (rows + 1)
-        pts = []
-        for r in range(1, rows + 1):
-            for c in range(1, cols + 1):
-                jitter_x = np.random.randint(-margin_x // 3, margin_x // 3)
-                jitter_y = np.random.randint(-margin_y // 3, margin_y // 3)
-                x = c * margin_x + jitter_x
-                y = r * margin_y + jitter_y
-                pts.append((x, y))
+    def draw_burst_lines(self, frame, mel, idx):
+        center = (self.W // 2, self.H // 2)
+        for i in range(0, mel.shape[0], 5):
+            angle = np.random.uniform(0, 2 * np.pi)
+            length = int(mel[i, idx] * self.W / 2)
+            x = int(center[0] + np.cos(angle) * length)
+            y = int(center[1] + np.sin(angle) * length)
+            color = self.freq_to_color(i)
+            cv2.line(frame, center, (x, y), color, 1)
 
-        for i in range(len(pts)):
-            for j in range(i + 1, len(pts)):
-                # Collegare solo punti vicini per formare rettangoli
-                dist = np.linalg.norm(np.array(pts[i]) - np.array(pts[j]))
-                max_dist = max(margin_x, margin_y) * 1.5
-                if dist < max_dist:
-                    val = mel[np.random.randint(0, mel.shape[0]), idx]
-                    if val > 0.1:
-                        color = self.freq_to_color(np.random.randint(0, mel.shape[0]))
-                        thickness = max(1, int(val * 5))
-                        cv2.line(frame, pts[i], pts[j], color, thickness)
-
-    def draw_complex_geometric_network(self, frame, mel, idx):
-        pts = [(np.random.randint(0, self.W), np.random.randint(0, self.H)) for _ in range(25)]
-        for i in range(len(pts)):
-            for j in range(i + 1, len(pts)):
-                val = mel[np.random.randint(0, mel.shape[0]), idx]
-                if val > 0.2:
-                    color = self.freq_to_color(np.random.randint(0, mel.shape[0]))
-                    thickness = max(1, int(val * 6))
-                    cv2.line(frame, pts[i], pts[j], color, thickness)
+    def draw_jagged_lines(self, frame, mel, idx):
+        for i in range(0, mel.shape[0], 10):
+            y = int((i / mel.shape[0]) * self.H)
+            x_start = 0
+            for j in range(5):
+                x_end = x_start + np.random.randint(10, 40)
+                color = self.freq_to_color(i)
+                volume = mel[i, idx]
+                cv2.line(frame, (x_start, y), (x_end, y + np.random.randint(-10, 10)), color, max(1, int(volume * 5)))
+                x_start = x_end
 
     def generate_video(self, mel, duration, sync_audio=True):
         for f in [self.TEMP, self.FINAL]:
@@ -151,14 +151,14 @@ class VideoGenerator:
                 t_idx = int((i / total_frames) * mel.shape[1])
                 if self.effect_mode == "connessioni":
                     self.draw_connected_lines(frame, mel, t_idx)
-                elif self.effect_mode == "rettangoli":
-                    self.draw_rectangular_grid(frame, mel, t_idx)
-                elif self.effect_mode == "geometriche":
-                    self.draw_complex_geometric_network(frame, mel, t_idx)
+                elif self.effect_mode == "esplosione":
+                    self.draw_burst_lines(frame, mel, t_idx)
+                elif self.effect_mode == "frastagliate":
+                    self.draw_jagged_lines(frame, mel, t_idx)
                 writer.write(frame)
                 if i % 10 == 0:
                     progress.progress((i + 1) / total_frames)
-                    status.text(f"🎬 Frame {i + 1}/{total_frames}")
+                    status.text(f"🎮 Frame {i + 1}/{total_frames}")
             except Exception as e:
                 st.warning(f"⚠️ Errore al frame {i}: {str(e)}")
         writer.release()
@@ -179,94 +179,63 @@ class VideoGenerator:
         gc.collect()
         return True
 
+
 def main():
-    FORMAT_RESOLUTIONS = {
-        "16:9": (1280, 720),
-        "9:16": (720, 1280),
-        "1:1": (720, 720),
-        "4:3": (800, 600)
-    }
+    st.set_page_config(page_title="🎵 AudioLinee - ColorFX", layout="centered")
+    st.title("🎨 AudioLinee - ColorFX Edition")
+    st.markdown("Carica un file audio per generare un video artistico basato sulle frequenze.")
 
-    st.set_page_config(page_title="🎵 AudioLinee - by Loop507", layout="centered")
-    st.title("🎨 AudioLinee")
-    st.markdown("### by Loop507")
-    st.markdown("Carica un file audio e genera un video visivo sincronizzato.")
+    uploaded_file = st.file_uploader("🎧 Carica un file audio (.wav, .mp3)", type=["wav", "mp3"])
+    if uploaded_file is None:
+        return
 
-    uploaded_file = st.file_uploader("🎧 Carica un file audio (.wav o .mp3)", type=["wav", "mp3"])
-    if uploaded_file is not None:
-        if not validate_audio_file(uploaded_file):
-            return
-        with open("input_audio.wav", "wb") as f:
-            f.write(uploaded_file.read())
-        st.success("🔊 Audio caricato correttamente!")
+    if not validate_audio_file(uploaded_file):
+        return
 
-        y, sr, audio_duration = load_and_process_audio("input_audio.wav")
-        if y is None:
-            return
-        st.info(f"🔊 Durata audio: {audio_duration:.2f} secondi")
+    with open("input_audio.wav", "wb") as f:
+        f.write(uploaded_file.read())
+    st.success("🔊 Audio caricato!")
 
-        with st.spinner("📊 Analisi audio in corso..."):
-            mel_spec_norm = generate_melspectrogram(y, sr)
-        if mel_spec_norm is None:
-            return
-        st.success("✅ Analisi audio completata!")
+    y, sr, audio_duration = load_and_process_audio("input_audio.wav")
+    if y is None:
+        return
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            video_format = st.selectbox("📐 Formato video", list(FORMAT_RESOLUTIONS.keys()))
-        with col2:
-            effect_level = st.selectbox("🎨 Livello effetti", ["soft", "medium", "hard"])
-        with col3:
-            fps_choice = st.selectbox("🎞️ Fotogrammi al secondo (FPS)", [5, 10, 15, 24, 30], index=3)
+    st.info(f"Durata audio: {audio_duration:.2f} secondi")
 
-        effect_mode = st.selectbox("✨ Effetto artistico", ["connessioni", "rettangoli", "geometriche"])
+    mel_spec_norm = generate_melspectrogram(y, sr)
+    if mel_spec_norm is None:
+        return
 
-        st.markdown("🎨 Scegli i colori per le frequenze (basso, medio, alto):")
-        col_low, col_mid, col_high = st.columns(3)
-        with col_low:
-            low_color = st.color_picker("Basse frequenze", "#000000")
-        with col_mid:
-            mid_color = st.color_picker("Medie frequenze", "#FF0000")
-        with col_high:
-            high_color = st.color_picker("Alte frequenze", "#0000FF")
+    with st.expander("🎧 Impostazioni video"):
+        format_res = st.selectbox("📀 Formato", {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (720, 720), "4:3": (800, 600)})
+        level = st.selectbox("🎨 Livello effetto", ["soft", "medium", "hard"], index=1)
+        fps = st.selectbox("🎞️ FPS", [5, 10, 15, 24, 30], index=3)
+        bg_color = hex_to_bgr(st.color_picker("🖌️ Colore sfondo", "#FFFFFF"))
+        effect_mode = st.selectbox("✨ Tipo di effetto", ["connessioni", "esplosione", "frastagliate"])
 
-        bg_color_hex = st.color_picker("🎨 Colore sfondo", "#FFFFFF")
+        st.markdown("🎨 **Colore per gamma di frequenze**")
+        low = hex_to_bgr(st.color_picker("Basse frequenze", "#000000"))
+        mid = hex_to_bgr(st.color_picker("Medie frequenze", "#FF0000"))
+        high = hex_to_bgr(st.color_picker("Alte frequenze", "#0000FF"))
+        freq_colors = {"low": low, "mid": mid, "high": high}
 
-        sync_audio = st.checkbox("🔊 Sincronizza audio nel video", value=True)
-        if sync_audio and not check_ffmpeg():
-            st.warning("⚠️ FFmpeg non disponibile, la sincronizzazione audio è disabilitata.")
-            sync_audio = False
+    sync_audio = st.checkbox("🔊 Aggiungi audio al video", value=True)
 
-        if st.button("🎬 Genera Video"):
-            freq_colors = {
-                'low': hex_to_bgr(low_color),
-                'mid': hex_to_bgr(mid_color),
-                'high': hex_to_bgr(high_color)
-            }
-            bg_color_bgr = hex_to_bgr(bg_color_hex)
-            generator = VideoGenerator(
-                FORMAT_RESOLUTIONS[video_format],
-                effect_level,
-                fps=fps_choice,
-                bg_color=bg_color_bgr,
-                freq_colors=freq_colors,
-                effect_mode=effect_mode
-            )
-            success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
-            if success and os.path.exists(generator.FINAL):
-                with open(generator.FINAL, "rb") as f:
-                    st.download_button("⬇️ Scarica il video", f, file_name=f"audio_linee_{video_format}_{effect_level}_{effect_mode}.mp4", mime="video/mp4")
-                file_size = os.path.getsize(generator.FINAL)
-                st.info(f"📁 Dimensione file: {file_size / 1024 / 1024:.1f} MB")
-            else:
-                st.error("❌ Errore nella generazione del video.")
+    if st.button("🎬 Genera Video"):
+        generator = VideoGenerator(format_res, level, fps, bg_color, freq_colors, effect_mode)
+        success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
+        if success and os.path.exists("final_output.mp4"):
+            with open("final_output.mp4", "rb") as f:
+                st.download_button("⬇️ Scarica il video", f, file_name="audiolinee_output.mp4", mime="video/mp4")
+            size_mb = os.path.getsize("final_output.mp4") / (1024 * 1024)
+            st.info(f"📁 Dimensione video: {size_mb:.1f} MB")
 
-        if st.button("🧹 Pulisci file temporanei"):
-            temp_files = ["input_audio.wav", "temp_output.mp4", "final_output.mp4"]
-            for f in temp_files:
-                if os.path.exists(f):
-                    os.remove(f)
-            st.success("✅ File temporanei eliminati!")
+    if st.button("🪑 Pulisci file temporanei"):
+        for f in ["input_audio.wav", "temp_output.mp4", "final_output.mp4"]:
+            if os.path.exists(f):
+                os.remove(f)
+        st.success("✅ Pulizia completata!")
+
 
 if __name__ == "__main__":
     main()
