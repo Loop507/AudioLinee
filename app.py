@@ -81,7 +81,7 @@ def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
 
 
 class VideoGenerator:
-    def __init__(self, format_res: Tuple[int, int], level: str, fps: int = 30, bg_color: Tuple[int,int,int]=(255,255,255), freq_colors=None, effect_mode="connessioni"):
+    def __init__(self, format_res: Tuple[int, int], level: str, fps: int = 30, bg_color: Tuple[int,int,int]=(255,255,255), freq_colors=None, effect_mode="quadrati"):
         self.W, self.H = format_res
         self.FPS = fps
         self.LEVEL = level
@@ -103,41 +103,31 @@ class VideoGenerator:
             return self.freq_colors['mid']
         return self.freq_colors['high']
 
-    def draw_connected_lines(self, frame, mel, idx):
-        pts = [(np.random.randint(0, self.W), np.random.randint(0, self.H)) for _ in range(15)]
-        volume = np.mean(mel[:, idx])
+    def draw_quadrati(self, frame, mel, idx):
+        pts = [(np.random.randint(0, self.W), np.random.randint(0, self.H)) for _ in range(self.density)]
+        for i in range(len(pts)):
+            for j in range(i + 1, len(pts)):
+                for k in range(j + 1, len(pts)):
+                    val = mel[np.random.randint(0, mel.shape[0]), idx]
+                    if val > 0.3:
+                        color = self.freq_to_color(np.random.randint(0, mel.shape[0]))
+                        thick = max(1, int(val * 4))
+                        cv2.line(frame, pts[i], pts[j], color, thick)
+                        cv2.line(frame, pts[j], pts[k], color, thick)
+                        cv2.line(frame, pts[k], pts[i], color, thick)
+
+    def draw_forme_complesse(self, frame, mel, idx):
+        pts = [(np.random.randint(0, self.W), np.random.randint(0, self.H)) for _ in range(self.density)]
         for i in range(len(pts)):
             for j in range(i + 1, len(pts)):
                 val = mel[np.random.randint(0, mel.shape[0]), idx]
-                if val > 0.3:
+                if val > 0.2:
                     color = self.freq_to_color(np.random.randint(0, mel.shape[0]))
-                    thick = max(1, int(1 + val * 4 * volume * 3))  # modulazione spessore linea
-                    cv2.line(frame, pts[i], pts[j], color, thick)
-
-    def draw_burst_lines(self, frame, mel, idx):
-        center = (self.W // 2, self.H // 2)
-        volume = np.mean(mel[:, idx])
-        for i in range(0, mel.shape[0], 5):
-            angle = np.random.uniform(0, 2 * np.pi)
-            length = int(mel[i, idx] * self.W / 2)
-            x = int(center[0] + np.cos(angle) * length)
-            y = int(center[1] + np.sin(angle) * length)
-            color = self.freq_to_color(i)
-            thick = max(1, int(volume * 5))
-            cv2.line(frame, center, (x, y), color, thick)
-
-    def draw_jagged_lines(self, frame, mel, idx):
-        volume = np.mean(mel[:, idx])
-        for i in range(0, mel.shape[0], 10):
-            y = int((i / mel.shape[0]) * self.H)
-            x_start = 0
-            for j in range(5):
-                x_end = x_start + np.random.randint(10, 40)
-                color = self.freq_to_color(i)
-                val = mel[i, idx]
-                thick = max(1, int(val * 5 * volume * 2))
-                cv2.line(frame, (x_start, y), (x_end, y + np.random.randint(-10, 10)), color, thick)
-                x_start = x_end
+                    thick = max(1, int(val * 5))
+                    offset = (np.random.randint(-10, 10), np.random.randint(-10, 10))
+                    pt1 = (pts[i][0] + offset[0], pts[i][1] + offset[1])
+                    pt2 = (pts[j][0] + offset[0], pts[j][1] + offset[1])
+                    cv2.line(frame, pt1, pt2, color, thick)
 
     def generate_video(self, mel, duration, sync_audio=True):
         for f in [self.TEMP, self.FINAL]:
@@ -153,12 +143,10 @@ class VideoGenerator:
             try:
                 frame = np.ones((self.H, self.W, 3), dtype=np.uint8) * np.array(self.bg_color, dtype=np.uint8)
                 t_idx = int((i / total_frames) * mel.shape[1])
-                if self.effect_mode == "connessioni":
-                    self.draw_connected_lines(frame, mel, t_idx)
-                elif self.effect_mode == "esplosione":
-                    self.draw_burst_lines(frame, mel, t_idx)
-                elif self.effect_mode == "frastagliate":
-                    self.draw_jagged_lines(frame, mel, t_idx)
+                if self.effect_mode == "quadrati":
+                    self.draw_quadrati(frame, mel, t_idx)
+                elif self.effect_mode == "forme_complesse":
+                    self.draw_forme_complesse(frame, mel, t_idx)
                 writer.write(frame)
                 if i % 10 == 0:
                     progress.progress((i + 1) / total_frames)
@@ -244,10 +232,10 @@ def main():
             st.warning("⚠️ FFmpeg non disponibile - La sincronizzazione audio è disabilitata")
             sync_audio = False
 
-        effect_mode = st.selectbox("✨ Scegli effetto visivo", ["connessioni", "esplosione", "frastagliate"])
+        effect_mode = st.selectbox("✨ Scegli effetto visivo", ["quadrati", "forme_complesse"])
 
         if st.button("🎬 Genera Video"):
-            format_res = FORMAT_RESOLUTIONS[video_format]  # prendi la tupla dimensioni
+            format_res = FORMAT_RESOLUTIONS[video_format]
             bg_color_bgr = hex_to_bgr(bg_color_hex)
             generator = VideoGenerator(format_res, effect_level, fps=fps_choice, bg_color=bg_color_bgr, freq_colors=freq_colors, effect_mode=effect_mode)
             success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
