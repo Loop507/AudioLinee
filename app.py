@@ -10,9 +10,9 @@ from typing import Tuple, Optional
 from scipy.ndimage import uniform_filter1d  # smoothing mel spectrogram
 
 
-MAX_DURATION = 300  # 5 minuti massimo
-MIN_DURATION = 1.0  # 1 secondo minimo
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_DURATION = 300
+MIN_DURATION = 1.0
+MAX_FILE_SIZE = 50 * 1024 * 1024
 
 
 def check_ffmpeg() -> bool:
@@ -81,15 +81,15 @@ def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
 
 
 class VideoGenerator:
-    def __init__(self, format_res: Tuple[int, int], level: str, fps: int = 30, bg_color: Tuple[int,int,int]=(255,255,255), freq_colors=None, effect_mode="quadrati"):
+    def __init__(self, format_res: Tuple[int, int], level: str, fps: int = 30, bg_color: Tuple[int,int,int]=(255,255,255), freq_colors=None, effect_mode="linee"):
         self.W, self.H = format_res
         self.FPS = fps
         self.LEVEL = level
         self.bg_color = bg_color
         self.freq_colors = freq_colors or {
-            'low': (0, 0, 0),     # nero
-            'mid': (0, 0, 255),   # rosso
-            'high': (255, 0, 0)   # blu
+            'low': (0, 0, 0),
+            'mid': (0, 0, 255),
+            'high': (255, 0, 0)
         }
         self.effect_mode = effect_mode
         self.TEMP = "temp_output.mp4"
@@ -103,21 +103,20 @@ class VideoGenerator:
             return self.freq_colors['mid']
         return self.freq_colors['high']
 
-    def draw_quadrati(self, frame, mel, idx):
+    def draw_linee(self, frame, mel, idx):
         pts = [(np.random.randint(0, self.W), np.random.randint(0, self.H)) for _ in range(self.density)]
+        # connessioni che spesso formano quadrati/rettangoli irregolari
         for i in range(len(pts)):
             for j in range(i + 1, len(pts)):
-                for k in range(j + 1, len(pts)):
-                    val = mel[np.random.randint(0, mel.shape[0]), idx]
-                    if val > 0.3:
-                        color = self.freq_to_color(np.random.randint(0, mel.shape[0]))
-                        thick = max(1, int(val * 4))
-                        cv2.line(frame, pts[i], pts[j], color, thick)
-                        cv2.line(frame, pts[j], pts[k], color, thick)
-                        cv2.line(frame, pts[k], pts[i], color, thick)
+                val = mel[np.random.randint(0, mel.shape[0]), idx]
+                if val > 0.3:
+                    color = self.freq_to_color(np.random.randint(0, mel.shape[0]))
+                    thick = max(1, int(val * 4))
+                    cv2.line(frame, pts[i], pts[j], color, thick)
 
     def draw_forme_complesse(self, frame, mel, idx):
         pts = [(np.random.randint(0, self.W), np.random.randint(0, self.H)) for _ in range(self.density)]
+        # connessioni per figure geometriche complesse
         for i in range(len(pts)):
             for j in range(i + 1, len(pts)):
                 val = mel[np.random.randint(0, mel.shape[0]), idx]
@@ -143,8 +142,8 @@ class VideoGenerator:
             try:
                 frame = np.ones((self.H, self.W, 3), dtype=np.uint8) * np.array(self.bg_color, dtype=np.uint8)
                 t_idx = int((i / total_frames) * mel.shape[1])
-                if self.effect_mode == "quadrati":
-                    self.draw_quadrati(frame, mel, t_idx)
+                if self.effect_mode == "linee":
+                    self.draw_linee(frame, mel, t_idx)
                 elif self.effect_mode == "forme_complesse":
                     self.draw_forme_complesse(frame, mel, t_idx)
                 writer.write(frame)
@@ -232,7 +231,7 @@ def main():
             st.warning("⚠️ FFmpeg non disponibile - La sincronizzazione audio è disabilitata")
             sync_audio = False
 
-        effect_mode = st.selectbox("✨ Scegli effetto visivo", ["quadrati", "forme_complesse"])
+        effect_mode = st.selectbox("✨ Scegli effetto visivo", ["linee", "forme_complesse"])
 
         if st.button("🎬 Genera Video"):
             format_res = FORMAT_RESOLUTIONS[video_format]
