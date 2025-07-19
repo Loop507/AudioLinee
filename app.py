@@ -1,5 +1,3 @@
-# 🎵 AudioLinee - by Loop507 - Versione Estesa con Effetti e Colori per Frequenze
-
 import streamlit as st
 import numpy as np
 import cv2
@@ -9,11 +7,12 @@ import subprocess
 import gc
 import shutil
 from typing import Tuple, Optional
-from scipy.ndimage import uniform_filter1d  # <--- AGGIUNTO PER SMOOTHING
+from scipy.ndimage import uniform_filter1d  # smoothing mel spectrogram
 
-MAX_DURATION = 300
-MIN_DURATION = 1.0
-MAX_FILE_SIZE = 50 * 1024 * 1024
+
+MAX_DURATION = 300  # 5 minuti massimo
+MIN_DURATION = 1.0  # 1 secondo minimo
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 def check_ffmpeg() -> bool:
@@ -47,6 +46,10 @@ def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Option
         return None, None, None
 
 
+def smooth_mel(mel, smoothing=5):
+    return uniform_filter1d(mel, size=smoothing, axis=1)
+
+
 def generate_melspectrogram(y: np.ndarray, sr: int) -> Optional[np.ndarray]:
     try:
         S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=sr / 2)
@@ -63,15 +66,11 @@ def generate_melspectrogram(y: np.ndarray, sr: int) -> Optional[np.ndarray]:
         if mel_spec_norm.shape[1] == 0:
             st.error("❌ Lo spettrogramma è vuoto: l'audio è troppo breve o non contiene dati validi.")
             return None
-        mel_spec_norm = smooth_mel(mel_spec_norm, smoothing=5)  # <--- SMOOTHING INSERITO QUI
+        mel_spec_norm = smooth_mel(mel_spec_norm, smoothing=5)
         return mel_spec_norm
     except Exception as e:
         st.error(f"❌ Errore nella generazione dello spettrogramma: {str(e)}")
         return None
-
-
-def smooth_mel(mel, smoothing=5):
-    return uniform_filter1d(mel, size=smoothing, axis=1)
 
 
 def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
@@ -82,7 +81,7 @@ def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
 
 
 class VideoGenerator:
-    def __init__(self, format_res, level, fps=30, bg_color=(255, 255, 255), freq_colors=None, effect_mode="connessioni"):
+    def __init__(self, format_res: Tuple[int, int], level: str, fps: int = 30, bg_color: Tuple[int,int,int]=(255,255,255), freq_colors=None, effect_mode="connessioni"):
         self.W, self.H = format_res
         self.FPS = fps
         self.LEVEL = level
@@ -106,33 +105,38 @@ class VideoGenerator:
 
     def draw_connected_lines(self, frame, mel, idx):
         pts = [(np.random.randint(0, self.W), np.random.randint(0, self.H)) for _ in range(15)]
+        volume = np.mean(mel[:, idx])
         for i in range(len(pts)):
             for j in range(i + 1, len(pts)):
                 val = mel[np.random.randint(0, mel.shape[0]), idx]
                 if val > 0.3:
                     color = self.freq_to_color(np.random.randint(0, mel.shape[0]))
-                    thick = int(1 + val * 4)
+                    thick = max(1, int(1 + val * 4 * volume * 3))  # modulazione spessore linea
                     cv2.line(frame, pts[i], pts[j], color, thick)
 
     def draw_burst_lines(self, frame, mel, idx):
         center = (self.W // 2, self.H // 2)
+        volume = np.mean(mel[:, idx])
         for i in range(0, mel.shape[0], 5):
             angle = np.random.uniform(0, 2 * np.pi)
             length = int(mel[i, idx] * self.W / 2)
             x = int(center[0] + np.cos(angle) * length)
             y = int(center[1] + np.sin(angle) * length)
             color = self.freq_to_color(i)
-            cv2.line(frame, center, (x, y), color, 1)
+            thick = max(1, int(volume * 5))
+            cv2.line(frame, center, (x, y), color, thick)
 
     def draw_jagged_lines(self, frame, mel, idx):
+        volume = np.mean(mel[:, idx])
         for i in range(0, mel.shape[0], 10):
             y = int((i / mel.shape[0]) * self.H)
             x_start = 0
             for j in range(5):
                 x_end = x_start + np.random.randint(10, 40)
                 color = self.freq_to_color(i)
-                volume = mel[i, idx]
-                cv2.line(frame, (x_start, y), (x_end, y + np.random.randint(-10, 10)), color, max(1, int(volume * 5)))
+                val = mel[i, idx]
+                thick = max(1, int(val * 5 * volume * 2))
+                cv2.line(frame, (x_start, y), (x_end, y + np.random.randint(-10, 10)), color, thick)
                 x_start = x_end
 
     def generate_video(self, mel, duration, sync_audio=True):
@@ -162,79 +166,105 @@ class VideoGenerator:
             except Exception as e:
                 st.warning(f"⚠️ Errore al frame {i}: {str(e)}")
         writer.release()
+
         if sync_audio and check_ffmpeg():
             try:
                 subprocess.run([
                     "ffmpeg", "-y", "-i", self.TEMP, "-i", "input_audio.wav",
                     "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
                     "-c:a", "aac", "-shortest", self.FINAL
-                ], capture_output=True)
+                ], capture_output=True, check=True)
                 os.remove(self.TEMP)
             except Exception as e:
                 st.error(f"Errore FFmpeg: {str(e)}")
                 os.rename(self.TEMP, self.FINAL)
         else:
             os.rename(self.TEMP, self.FINAL)
+
         status.text("✅ Video completato!")
         gc.collect()
         return True
 
 
 def main():
-    st.set_page_config(page_title="🎵 AudioLinee - ColorFX", layout="centered")
-    st.title("🎨 AudioLinee - ColorFX Edition")
-    st.markdown("Carica un file audio per generare un video artistico basato sulle frequenze.")
+    FORMAT_RESOLUTIONS = {
+        "16:9": (1280, 720),
+        "9:16": (720, 1280),
+        "1:1": (720, 720),
+        "4:3": (800, 600)
+    }
 
-    uploaded_file = st.file_uploader("🎧 Carica un file audio (.wav, .mp3)", type=["wav", "mp3"])
-    if uploaded_file is None:
-        return
+    st.set_page_config(page_title="🎵 AudioLinee - by Loop507", layout="centered")
+    st.title("🎨 AudioLinee")
+    st.markdown("### by Loop507")
+    st.markdown("Carica un file audio e genera un video visivo sincronizzato.")
 
-    if not validate_audio_file(uploaded_file):
-        return
+    uploaded_file = st.file_uploader("🎧 Carica un file audio (.wav o .mp3)", type=["wav", "mp3"])
+    if uploaded_file is not None:
+        if not validate_audio_file(uploaded_file):
+            return
+        with open("input_audio.wav", "wb") as f:
+            f.write(uploaded_file.read())
+        st.success("🔊 Audio caricato correttamente!")
 
-    with open("input_audio.wav", "wb") as f:
-        f.write(uploaded_file.read())
-    st.success("🔊 Audio caricato!")
+        y, sr, audio_duration = load_and_process_audio("input_audio.wav")
+        if y is None:
+            return
+        st.info(f"🔊 Durata audio: {audio_duration:.2f} secondi")
 
-    y, sr, audio_duration = load_and_process_audio("input_audio.wav")
-    if y is None:
-        return
+        with st.spinner("📊 Analisi audio in corso..."):
+            mel_spec_norm = generate_melspectrogram(y, sr)
+        if mel_spec_norm is None:
+            return
+        st.success("✅ Analisi audio completata!")
 
-    st.info(f"Durata audio: {audio_duration:.2f} secondi")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            video_format = st.selectbox("📐 Formato video", list(FORMAT_RESOLUTIONS.keys()))
+        with col2:
+            effect_level = st.selectbox("🎨 Livello effetti", ["soft", "medium", "hard"])
+        with col3:
+            fps_choice = st.selectbox("🎞️ Fotogrammi al secondo (FPS)", [5, 10, 15, 24, 30], index=4)
 
-    mel_spec_norm = generate_melspectrogram(y, sr)
-    if mel_spec_norm is None:
-        return
+        bg_color_hex = st.color_picker("🎨 Colore sfondo", "#FFFFFF")
+        line_color_low = st.color_picker("🔴 Colore frequenze basse", "#000000")
+        line_color_mid = st.color_picker("🟠 Colore frequenze medie", "#FF0000")
+        line_color_high = st.color_picker("🔵 Colore frequenze alte", "#0000FF")
 
-    with st.expander("🎧 Impostazioni video"):
-        format_res = st.selectbox("📀 Formato", {"16:9": (1280, 720), "9:16": (720, 1280), "1:1": (720, 720), "4:3": (800, 600)})
-        level = st.selectbox("🎨 Livello effetto", ["soft", "medium", "hard"], index=1)
-        fps = st.selectbox("🎞️ FPS", [5, 10, 15, 24, 30], index=3)
-        bg_color = hex_to_bgr(st.color_picker("🖌️ Colore sfondo", "#FFFFFF"))
-        effect_mode = st.selectbox("✨ Tipo di effetto", ["connessioni", "esplosione", "frastagliate"])
+        freq_colors = {
+            'low': hex_to_bgr(line_color_low),
+            'mid': hex_to_bgr(line_color_mid),
+            'high': hex_to_bgr(line_color_high)
+        }
 
-        st.markdown("🎨 **Colore per gamma di frequenze**")
-        low = hex_to_bgr(st.color_picker("Basse frequenze", "#000000"))
-        mid = hex_to_bgr(st.color_picker("Medie frequenze", "#FF0000"))
-        high = hex_to_bgr(st.color_picker("Alte frequenze", "#0000FF"))
-        freq_colors = {"low": low, "mid": mid, "high": high}
+        st.info(f"📦 Stima dimensione video: ~{(fps_choice * audio_duration * 0.05):.1f} MB")
 
-    sync_audio = st.checkbox("🔊 Aggiungi audio al video", value=True)
+        sync_audio = st.checkbox("🔊 Sincronizza l'audio nel video")
+        if not check_ffmpeg():
+            st.warning("⚠️ FFmpeg non disponibile - La sincronizzazione audio è disabilitata")
+            sync_audio = False
 
-    if st.button("🎬 Genera Video"):
-        generator = VideoGenerator(format_res, level, fps, bg_color, freq_colors, effect_mode)
-        success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
-        if success and os.path.exists("final_output.mp4"):
-            with open("final_output.mp4", "rb") as f:
-                st.download_button("⬇️ Scarica il video", f, file_name="audiolinee_output.mp4", mime="video/mp4")
-            size_mb = os.path.getsize("final_output.mp4") / (1024 * 1024)
-            st.info(f"📁 Dimensione video: {size_mb:.1f} MB")
+        effect_mode = st.selectbox("✨ Scegli effetto visivo", ["connessioni", "esplosione", "frastagliate"])
 
-    if st.button("🪑 Pulisci file temporanei"):
-        for f in ["input_audio.wav", "temp_output.mp4", "final_output.mp4"]:
-            if os.path.exists(f):
-                os.remove(f)
-        st.success("✅ Pulizia completata!")
+        if st.button("🎬 Genera Video"):
+            format_res = FORMAT_RESOLUTIONS[video_format]  # prendi la tupla dimensioni
+            bg_color_bgr = hex_to_bgr(bg_color_hex)
+            generator = VideoGenerator(format_res, effect_level, fps=fps_choice, bg_color=bg_color_bgr, freq_colors=freq_colors, effect_mode=effect_mode)
+            success = generator.generate_video(mel_spec_norm, audio_duration, sync_audio)
+            if success and os.path.exists("final_output.mp4"):
+                with open("final_output.mp4", "rb") as f:
+                    st.download_button("⬇️ Scarica il video", f, file_name=f"audiolinee_{video_format}_{effect_level}_{effect_mode}.mp4", mime="video/mp4")
+                file_size = os.path.getsize("final_output.mp4")
+                st.info(f"📁 Dimensione file: {file_size / 1024 / 1024:.1f} MB")
+            else:
+                st.error("❌ Si è verificato un errore nella generazione del video.")
+
+        if st.button("🧹 Pulisci file temporanei"):
+            temp_files = ["input_audio.wav", "temp_output.mp4", "final_output.mp4"]
+            for f in temp_files:
+                if os.path.exists(f):
+                    os.remove(f)
+            st.success("✅ File temporanei eliminati!")
 
 
 if __name__ == "__main__":
