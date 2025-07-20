@@ -409,7 +409,7 @@ def main():
 
         # Opzione per sincronizzare l'audio (richiede FFmpeg)
         sync_audio = st.checkbox("🔊 Sincronizza audio nel video", value=True, 
-                                 help="Richiede l'installatione di FFmpeg sul sistema.")
+                                 help="Richiede l'installazione di FFmpeg sul sistema.")
         if sync_audio and not check_ffmpeg():
             st.warning("⚠️ FFmpeg non disponibile sul tuo sistema. La sincronizzazione audio sarà disabilitata. Assicurati che FFmpeg sia installato e nel PATH.")
             sync_audio = False
@@ -461,7 +461,7 @@ def main():
                             "ffmpeg", "-y", # Sovrascrivi il file di output se esiste
                             "-i", generator.FINAL, # Input è il video finale
                             "-t", str(PREVIEW_DURATION), # Durata dell'anteprima
-                            "-c:v", "libx64", "-crf", "30", "-preset", "ultrafast", # Compressione leggera e veloce per anteprima
+                            "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast", # Compressione leggera e veloce per anteprima
                             "-c:a", "copy", # Copia il flusso audio originale senza ricodifica
                             preview_file
                         ], capture_output=True, check=True) # Cattura output e solleva errore se il comando fallisce
