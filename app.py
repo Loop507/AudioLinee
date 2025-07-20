@@ -219,7 +219,7 @@ class VideoGenerator:
                         cv2.line(frame, pts[i], pts[j], color, thickness)
 
     def draw_complex_geometric_network(self, frame: np.ndarray, mel: np.ndarray, idx: int, volume_factor: float, tempo_factor: float):
-        """Disegna un effetto di rete geometrica complessa basato sull'audio."""
+        """Disegna un effetto di rete geometrica complessa basata sull'audio."""
         mood = self.get_mood_factor()
         
         # Numero di punti basato sul volume, con una base più conservativa
@@ -409,7 +409,7 @@ def main():
 
         # Opzione per sincronizzare l'audio (richiede FFmpeg)
         sync_audio = st.checkbox("🔊 Sincronizza audio nel video", value=True, 
-                                 help="Richiede l'installazione di FFmpeg sul sistema.")
+                                 help="Richiede l'installatione di FFmpeg sul sistema.")
         if sync_audio and not check_ffmpeg():
             st.warning("⚠️ FFmpeg non disponibile sul tuo sistema. La sincronizzazione audio sarà disabilitata. Assicurati che FFmpeg sia installato e nel PATH.")
             sync_audio = False
@@ -455,14 +455,14 @@ def main():
                 st.subheader("Guarda un'Anteprima del Video")
                 if check_ffmpeg():
                     try:
-                        st.info(f"Generazione anteprima di {PREVIEW_DURATION} secondi...")
+                        st.info(f"Generazione anteprima di {PREVIEW_DURATION} secondi con audio...")
                         # Usa FFmpeg per estrarre i primi PREVIEW_DURATION secondi
                         subprocess.run([
                             "ffmpeg", "-y", # Sovrascrivi il file di output se esiste
                             "-i", generator.FINAL, # Input è il video finale
                             "-t", str(PREVIEW_DURATION), # Durata dell'anteprima
-                            "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast", # Compressione leggera e veloce per anteprima
-                            "-an", # Rimuovi l'audio per una generazione più rapida dell'anteprima
+                            "-c:v", "libx64", "-crf", "30", "-preset", "ultrafast", # Compressione leggera e veloce per anteprima
+                            "-c:a", "copy", # Copia il flusso audio originale senza ricodifica
                             preview_file
                         ], capture_output=True, check=True) # Cattura output e solleva errore se il comando fallisce
                         
