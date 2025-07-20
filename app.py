@@ -1,10 +1,3 @@
-Hai ragione\! Mi scuso, ho aggiunto le funzioni di disegno ma mi sono dimenticato di includere le nuove opzioni nel menu a tendina degli effetti nell'interfaccia utente.
-
-Ho aggiornato il codice per aggiungere le voci per "linee\_casuali\_verticali\_orizzontali", "quadrati", "rettangoli" e "forme\_casuali\_quadrati\_rettangoli" nel `st.selectbox` degli effetti artistici.
-
-Ecco il codice corretto:
-
-```python
 import streamlit as st
 import numpy as np
 import cv2
@@ -698,10 +691,10 @@ def main():
             "geometriche", 
             "linee_orizzontali", 
             "linee_verticali", 
-            "linee_casuali_verticali_orizzontali", # Nuova opzione
-            "quadrati", # Nuova opzione
-            "rettangoli", # Nuova opzione
-            "forme_casuali_quadrati_rettangoli" # Nuova opzione
+            "linee_casuali_verticali_orizzontali", # Nuova opzione aggiunta
+            "quadrati", # Nuova opzione aggiunta
+            "rettangoli", # Nuova opzione aggiunta
+            "forme_casuali_quadrati_rettangoli" # Nuova opzione aggiunta
         ])
 
         st.markdown("🎨 Scegli i colori per le frequenze (basso, medio, alto):")
@@ -804,5 +797,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-```
