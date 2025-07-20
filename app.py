@@ -281,6 +281,40 @@ class VideoGenerator:
             
             cv2.line(frame, (0, y), (self.W, y), color_bgr, thickness)
 
+    def draw_vertical_lines(self, frame: np.ndarray, mel: np.ndarray, idx: int, volume_factor: float, tempo_factor: float):
+        """Disegna un effetto di linee verticali pulsanti basato sull'audio."""
+        mood = self.get_mood_factor()
+        
+        # Numero di linee proporzionale al volume e alla difficoltà
+        num_lines = int(5 + 20 * volume_factor * mood) 
+        
+        for i in range(num_lines):
+            # Calcola posizione X della linea con un piccolo jitter
+            x_base = int((i / num_lines) * self.W)
+            
+            # Movimento orizzontale dinamico basato sul tempo e sull'indice del frame
+            x_offset = int(20 * tempo_factor * mood * np.sin(idx * 0.1 + i * 0.5)) 
+            x = x_base + x_offset
+            x = np.clip(x, 0, self.W - 1) # Assicura che la linea rimanga nel frame
+            
+            # Preleva valore spettro per questa linea (usiamo un indice randomico del mel per varietà)
+            spec_val_idx = np.random.randint(0, mel.shape[0])
+            spec_val = mel[spec_val_idx, idx] 
+            
+            # Colore in base alla frequenza e alla sua intensità
+            line_color_base = self.freq_to_color(spec_val_idx)
+            
+            # Regola l'intensità del colore (simulando opacità/luminosità)
+            intensity_factor = 0.5 + 0.5 * spec_val * volume_factor 
+            color_bgr = (int(line_color_base[0] * intensity_factor), 
+                         int(line_color_base[1] * intensity_factor), 
+                         int(line_color_base[2] * intensity_factor))
+            
+            # Spessore che combina tutti i fattori
+            thickness = max(1, int(2 + spec_val * 5 * mood * volume_factor))
+            
+            cv2.line(frame, (x, 0), (x, self.H), color_bgr, thickness)
+
 
     def generate_video(self, mel: np.ndarray, rms_frames: np.ndarray, onset_frames: np.ndarray, duration: float, sync_audio: bool = True) -> bool:
         """
@@ -338,6 +372,8 @@ class VideoGenerator:
                     self.draw_complex_geometric_network(frame, mel, t_idx, volume_factor, tempo_factor)
                 elif self.effect_mode == "linee_orizzontali":
                     self.draw_horizontal_lines(frame, mel, t_idx, volume_factor, tempo_factor)
+                elif self.effect_mode == "linee_verticali":
+                    self.draw_vertical_lines(frame, mel, t_idx, volume_factor, tempo_factor)
                 
                 writer.write(frame) # Scrive il frame nel video
                 
@@ -434,7 +470,7 @@ def main():
             st.metric("🎼 Variazioni tempo", f"{np.std(onset_frames):.2f}")
 
         # Selezione dell'effetto artistico
-        effect_mode = st.selectbox("✨ Effetto artistico", ["connessioni", "rettangoli", "geometriche", "linee_orizzontali"])
+        effect_mode = st.selectbox("✨ Effetto artistico", ["connessioni", "rettangoli", "geometriche", "linee_orizzontali", "linee_verticali"])
 
         st.markdown("🎨 Scegli i colori per le frequenze (basso, medio, alto):")
         col_low, col_mid, col_high = st.columns(3)
