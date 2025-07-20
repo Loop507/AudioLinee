@@ -1,3 +1,10 @@
+Hai ragione\! Mi scuso, ho aggiunto le funzioni di disegno ma mi sono dimenticato di includere le nuove opzioni nel menu a tendina degli effetti nell'interfaccia utente.
+
+Ho aggiornato il codice per aggiungere le voci per "linee\_casuali\_verticali\_orizzontali", "quadrati", "rettangoli" e "forme\_casuali\_quadrati\_rettangoli" nel `st.selectbox` degli effetti artistici.
+
+Ecco il codice corretto:
+
+```python
 import streamlit as st
 import numpy as np
 import cv2
@@ -315,6 +322,213 @@ class VideoGenerator:
             
             cv2.line(frame, (x, 0), (x, self.H), color_bgr, thickness)
 
+    def draw_random_vertical_horizontal_lines(self, frame: np.ndarray, mel: np.ndarray, idx: int, volume_factor: float, tempo_factor: float):
+        """Disegna un effetto che combina linee orizzontali e verticali casuali basate sull'audio."""
+        mood = self.get_mood_factor()
+        
+        # Numero totale di linee (metà orizzontali, metà verticali)
+        num_total_lines = int(10 + 30 * volume_factor * mood) 
+        
+        for i in range(num_total_lines):
+            # Decidi casualmente se disegnare una linea orizzontale o verticale
+            if np.random.random() < 0.5: # 50% di probabilità per orizzontale
+                # Logica per linea orizzontale
+                y_base = int(np.random.randint(0, self.H)) # Posizione Y casuale
+                y_offset = int(15 * tempo_factor * mood * np.sin(idx * 0.1 + i * 0.5)) 
+                y = y_base + y_offset
+                y = np.clip(y, 0, self.H - 1)
+                
+                spec_val_idx = np.random.randint(0, mel.shape[0])
+                spec_val = mel[spec_val_idx, idx] 
+                
+                line_color_base = self.freq_to_color(spec_val_idx)
+                intensity_factor = 0.5 + 0.5 * spec_val * volume_factor 
+                color_bgr = (int(line_color_base[0] * intensity_factor), 
+                             int(line_color_base[1] * intensity_factor), 
+                             int(line_color_base[2] * intensity_factor))
+                
+                thickness = max(1, int(2 + spec_val * 5 * mood * volume_factor))
+                
+                cv2.line(frame, (0, y), (self.W, y), color_bgr, thickness)
+            else: # 50% di probabilità per verticale
+                # Logica per linea verticale
+                x_base = int(np.random.randint(0, self.W)) # Posizione X casuale
+                x_offset = int(15 * tempo_factor * mood * np.sin(idx * 0.1 + i * 0.5)) 
+                x = x_base + x_offset
+                x = np.clip(x, 0, self.W - 1)
+                
+                spec_val_idx = np.random.randint(0, mel.shape[0])
+                spec_val = mel[spec_val_idx, idx] 
+                
+                line_color_base = self.freq_to_color(spec_val_idx)
+                intensity_factor = 0.5 + 0.5 * spec_val * volume_factor 
+                color_bgr = (int(line_color_base[0] * intensity_factor), 
+                             int(line_color_base[1] * intensity_factor), 
+                             int(line_color_base[2] * intensity_factor))
+                
+                thickness = max(1, int(2 + spec_val * 5 * mood * volume_factor))
+                
+                cv2.line(frame, (x, 0), (x, self.H), color_bgr, thickness)
+
+    def draw_squares(self, frame: np.ndarray, mel: np.ndarray, idx: int, volume_factor: float, tempo_factor: float):
+        """Disegna quadrati di varie dimensioni basati sull'audio."""
+        mood = self.get_mood_factor()
+        
+        # Numero di quadrati influenzato dal volume e dal mood (AUMENTATO PER MAGGIORE DENSITÀ)
+        num_squares = int(20 + 50 * volume_factor * mood) # Aumento base e moltiplicatore
+        
+        for _ in range(num_squares):
+            center_x = np.random.randint(0, self.W)
+            center_y = np.random.randint(0, self.H)
+            
+            # Dimensione del quadrato influenzata dal volume e tempo
+            size = int(np.exp(np.log(5) + (np.log(80) - np.log(5)) * (0.3 + 0.7 * volume_factor * mood))) # Range leggermente ridotto per evitare sovrapposizioni eccessive con alta densità
+            size = max(5, min(size, min(self.W, self.H) // 5)) # Limita la dimensione massima
+            
+            # Jitter basato sul tempo
+            jitter_x = int(10 * tempo_factor * mood * (np.random.random() - 0.5))
+            jitter_y = int(10 * tempo_factor * mood * (np.random.random() - 0.5))
+            
+            top_left_x = int(center_x - size / 2 + jitter_x)
+            top_left_y = int(center_y - size / 2 + jitter_y)
+            bottom_right_x = int(center_x + size / 2 + jitter_x)
+            bottom_right_y = int(center_y + size / 2 + jitter_y)
+            
+            # Clamp ai bordi del frame
+            top_left_x = np.clip(top_left_x, 0, self.W)
+            top_left_y = np.clip(top_left_y, 0, self.H)
+            bottom_right_x = np.clip(bottom_right_x, 0, self.W)
+            bottom_right_y = np.clip(bottom_right_y, 0, self.H)
+
+            spec_val_idx = np.random.randint(0, mel.shape[0])
+            spec_val = mel[spec_val_idx, idx] 
+            
+            color_base = self.freq_to_color(spec_val_idx)
+            intensity_factor = 0.5 + 0.5 * spec_val * volume_factor 
+            color_bgr = (int(color_base[0] * intensity_factor), 
+                         int(color_base[1] * intensity_factor), 
+                         int(color_base[2] * intensity_factor))
+            
+            # Opacità (o trasparenza) simulata, più alta con volume/tempo
+            alpha = max(0.2, min(0.7, 0.3 + 0.6 * volume_factor * tempo_factor * mood)) # Massima opacità leggermente ridotta
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (top_left_x, top_left_y), (bottom_right_x, bottom_right_y), color_bgr, cv2.FILLED)
+            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
+
+    def draw_rectangles(self, frame: np.ndarray, mel: np.ndarray, idx: int, volume_factor: float, tempo_factor: float):
+        """Disegna rettangoli di varie dimensioni e proporzioni basati sull'audio."""
+        mood = self.get_mood_factor()
+        
+        # Numero di rettangoli (AUMENTATO PER MAGGIORE DENSITÀ)
+        num_rects = int(20 + 50 * volume_factor * mood) # Aumento base e moltiplicatore
+        
+        for _ in range(num_rects):
+            center_x = np.random.randint(0, self.W)
+            center_y = np.random.randint(0, self.H)
+            
+            # Dimensione base influenzata dal volume
+            base_dim = int(np.exp(np.log(5) + (np.log(100) - np.log(5)) * (0.3 + 0.7 * volume_factor * mood))) # Range leggermente ridotto
+            base_dim = max(5, min(base_dim, min(self.W, self.H) // 4))
+            
+            # Proporzione casuale influenzata dal tempo (più tempo = più variazione)
+            aspect_ratio = 0.5 + 1.5 * np.random.random() * (0.5 + 0.5 * tempo_factor * mood) # Tra 0.5 e 2.0
+            
+            width = int(base_dim * aspect_ratio)
+            height = int(base_dim / aspect_ratio)
+            
+            # Jitter basato sul tempo
+            jitter_x = int(10 * tempo_factor * mood * (np.random.random() - 0.5))
+            jitter_y = int(10 * tempo_factor * mood * (np.random.random() - 0.5))
+            
+            top_left_x = int(center_x - width / 2 + jitter_x)
+            top_left_y = int(center_y - height / 2 + jitter_y)
+            bottom_right_x = int(center_x + width / 2 + jitter_x)
+            bottom_right_y = int(center_y + height / 2 + jitter_y)
+
+            # Clamp ai bordi
+            top_left_x = np.clip(top_left_x, 0, self.W)
+            top_left_y = np.clip(top_left_y, 0, self.H)
+            bottom_right_x = np.clip(bottom_right_x, 0, self.W)
+            bottom_right_y = np.clip(bottom_right_y, 0, self.H)
+            
+            spec_val_idx = np.random.randint(0, mel.shape[0])
+            spec_val = mel[spec_val_idx, idx] 
+            
+            color_base = self.freq_to_color(spec_val_idx)
+            intensity_factor = 0.5 + 0.5 * spec_val * volume_factor 
+            color_bgr = (int(color_base[0] * intensity_factor), 
+                         int(color_base[1] * intensity_factor), 
+                         int(color_base[2] * intensity_factor))
+            
+            alpha = max(0.2, min(0.7, 0.3 + 0.6 * volume_factor * tempo_factor * mood)) # Massima opacità leggermente ridotta
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (top_left_x, top_left_y), (bottom_right_x, bottom_right_y), color_bgr, cv2.FILLED)
+            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
+
+    def draw_random_shapes(self, frame: np.ndarray, mel: np.ndarray, idx: int, volume_factor: float, tempo_factor: float):
+        """Disegna casualmente quadrati o rettangoli basati sull'audio."""
+        mood = self.get_mood_factor()
+        
+        # Numero totale di forme (AUMENTATO PER MAGGIORE DENSITÀ)
+        num_shapes = int(30 + 70 * volume_factor * mood) # Aumento base e moltiplicatore
+        
+        for _ in range(num_shapes):
+            center_x = np.random.randint(0, self.W)
+            center_y = np.random.randint(0, self.H)
+            
+            # Dimensione base
+            base_dim = int(np.exp(np.log(5) + (np.log(100) - np.log(5)) * (0.3 + 0.7 * volume_factor * mood)))
+            base_dim = max(5, min(base_dim, min(self.W, self.H) // 4))
+            
+            jitter_x = int(10 * tempo_factor * mood * (np.random.random() - 0.5))
+            jitter_y = int(10 * tempo_factor * mood * (np.random.random() - 0.5))
+            
+            spec_val_idx = np.random.randint(0, mel.shape[0])
+            spec_val = mel[spec_val_idx, idx] 
+            
+            color_base = self.freq_to_color(spec_val_idx)
+            intensity_factor = 0.5 + 0.5 * spec_val * volume_factor 
+            color_bgr = (int(color_base[0] * intensity_factor), 
+                         int(color_base[1] * intensity_factor), 
+                         int(color_base[2] * intensity_factor))
+            
+            alpha = max(0.2, min(0.7, 0.3 + 0.6 * volume_factor * tempo_factor * mood)) # Massima opacità leggermente ridotta
+            overlay = frame.copy()
+
+            if np.random.random() < 0.5: # 50% di probabilità per quadrato
+                size = base_dim
+                top_left_x = int(center_x - size / 2 + jitter_x)
+                top_left_y = int(center_y - size / 2 + jitter_y)
+                bottom_right_x = int(center_x + size / 2 + jitter_x)
+                bottom_right_y = int(center_y + size / 2 + jitter_y)
+
+                top_left_x = np.clip(top_left_x, 0, self.W)
+                top_left_y = np.clip(top_left_y, 0, self.H)
+                bottom_right_x = np.clip(bottom_right_x, 0, self.W)
+                bottom_right_y = np.clip(bottom_right_y, 0, self.H)
+
+                cv2.rectangle(overlay, (top_left_x, top_left_y), (bottom_right_x, bottom_right_y), color_bgr, cv2.FILLED)
+            else: # 50% di probabilità per rettangolo
+                aspect_ratio = 0.5 + 1.5 * np.random.random() * (0.5 + 0.5 * tempo_factor * mood)
+                width = int(base_dim * aspect_ratio)
+                height = int(base_dim / aspect_ratio)
+
+                top_left_x = int(center_x - width / 2 + jitter_x)
+                top_left_y = int(center_y - height / 2 + jitter_y)
+                bottom_right_x = int(center_x + width / 2 + jitter_x)
+                bottom_right_y = int(center_y + height / 2 + jitter_y)
+
+                top_left_x = np.clip(top_left_x, 0, self.W)
+                top_left_y = np.clip(top_left_y, 0, self.H)
+                bottom_right_x = np.clip(bottom_right_x, 0, self.W)
+                bottom_right_y = np.clip(bottom_right_y, 0, self.H)
+
+                cv2.rectangle(overlay, (top_left_x, top_left_y), (bottom_right_x, bottom_right_y), color_bgr, cv2.FILLED)
+            
+            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
 
     def generate_video(self, mel: np.ndarray, rms_frames: np.ndarray, onset_frames: np.ndarray, duration: float, sync_audio: bool = True) -> bool:
         """
@@ -366,7 +580,7 @@ class VideoGenerator:
                 # Genera gli effetti visuali in base alla modalità selezionata
                 if self.effect_mode == "connessioni":
                     self.draw_connected_lines(frame, mel, t_idx, volume_factor, tempo_factor)
-                elif self.effect_mode == "rettangoli":
+                elif self.effect_mode == "rettangoli_griglia": 
                     self.draw_rectangular_grid(frame, mel, t_idx, volume_factor, tempo_factor)
                 elif self.effect_mode == "geometriche":
                     self.draw_complex_geometric_network(frame, mel, t_idx, volume_factor, tempo_factor)
@@ -374,6 +588,14 @@ class VideoGenerator:
                     self.draw_horizontal_lines(frame, mel, t_idx, volume_factor, tempo_factor)
                 elif self.effect_mode == "linee_verticali":
                     self.draw_vertical_lines(frame, mel, t_idx, volume_factor, tempo_factor)
+                elif self.effect_mode == "linee_casuali_verticali_orizzontali":
+                    self.draw_random_vertical_horizontal_lines(frame, mel, t_idx, volume_factor, tempo_factor)
+                elif self.effect_mode == "quadrati":
+                    self.draw_squares(frame, mel, t_idx, volume_factor, tempo_factor)
+                elif self.effect_mode == "rettangoli":
+                    self.draw_rectangles(frame, mel, t_idx, volume_factor, tempo_factor)
+                elif self.effect_mode == "forme_casuali_quadrati_rettangoli":
+                    self.draw_random_shapes(frame, mel, t_idx, volume_factor, tempo_factor)
                 
                 writer.write(frame) # Scrive il frame nel video
                 
@@ -469,8 +691,18 @@ def main():
             st.metric("⚡ Energia tempo media", f"{np.mean(onset_frames):.2f}")
             st.metric("🎼 Variazioni tempo", f"{np.std(onset_frames):.2f}")
 
-        # Selezione dell'effetto artistico
-        effect_mode = st.selectbox("✨ Effetto artistico", ["connessioni", "rettangoli", "geometriche", "linee_orizzontali", "linee_verticali"])
+        # Selezione dell'effetto artistico (AGGIORNATO)
+        effect_mode = st.selectbox("✨ Effetto artistico", [
+            "connessioni", 
+            "rettangoli_griglia", 
+            "geometriche", 
+            "linee_orizzontali", 
+            "linee_verticali", 
+            "linee_casuali_verticali_orizzontali", # Nuova opzione
+            "quadrati", # Nuova opzione
+            "rettangoli", # Nuova opzione
+            "forme_casuali_quadrati_rettangoli" # Nuova opzione
+        ])
 
         st.markdown("🎨 Scegli i colori per le frequenze (basso, medio, alto):")
         col_low, col_mid, col_high = st.columns(3)
@@ -572,3 +804,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+```
