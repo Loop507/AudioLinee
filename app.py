@@ -50,7 +50,7 @@ def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Option
         st.error(f"❌ Errore nel caricamento dell'audio: {str(e)}")
         return None, None, None
 
-def analyze_audio_features(y: np.ndarray, sr: int, fps: int, duration: float) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+def analyze_audio_features(y: np.ndarray, sr: int, fps: int, duration: float) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[float]]:
     """
     Analizza il volume (RMS), il tempo musicale (onset strength) e genera lo spettrogramma
     per la sincronizzazione visiva.
@@ -102,13 +102,20 @@ def analyze_audio_features(y: np.ndarray, sr: int, fps: int, duration: float) ->
         
         if mel_spec_norm.shape[1] == 0:
             st.error("❌ Lo spettrogramma è vuoto: l'audio è troppo breve o non contiene dati validi.")
-            return None, None, None
+            return None, None, None, None
         
-        return mel_spec_norm, rms_frames, onset_frames
+        # Stima BPM con librosa
+        try:
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr, hop_length=hop_length)
+            bpm = float(np.atleast_1d(tempo)[0])
+        except Exception:
+            bpm = 0.0
+        
+        return mel_spec_norm, rms_frames, onset_frames, bpm
         
     except Exception as e:
         st.error(f"❌ Errore nell'analisi audio: {str(e)}")
-        return None, None, None
+        return None, None, None, None
 
 def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
     """Converte un colore esadecimale (es. '#RRGGBB') in un tuple BGR (Blue, Green, Red)."""
@@ -668,7 +675,7 @@ def main():
             fps_choice = st.selectbox("🎞️ Fotogrammi al secondo (FPS)", [5, 10, 15, 24, 30], index=4) # Default 30 FPS
 
         with st.spinner("📊 Analisi audio avanzata in corso (volume, tempo, spettrogramma)..."):
-            mel_spec_norm, rms_frames, onset_frames = analyze_audio_features(y, sr, fps_choice, audio_duration)
+            mel_spec_norm, rms_frames, onset_frames, bpm_detected = analyze_audio_features(y, sr, fps_choice, audio_duration)
         
         if mel_spec_norm is None or rms_frames is None or onset_frames is None:
             return # Se l'analisi fallisce, interrompi
@@ -738,7 +745,10 @@ def main():
             success = generator.generate_video(mel_spec_norm, rms_frames, onset_frames, audio_duration, sync_audio)
             
             if success and os.path.exists(generator.FINAL):
-                # Pulsante per scaricare il video finale
+                file_size = os.path.getsize(generator.FINAL)
+                st.info(f"📁 Dimensione file: {file_size / 1024 / 1024:.1f} MB")
+
+                # --- Pulsante download video ---
                 with open(generator.FINAL, "rb") as f:
                     st.download_button(
                         "⬇️ Scarica il video", 
@@ -746,30 +756,27 @@ def main():
                         file_name=f"audio_linee_sync_{video_format}_{effect_level}_{effect_mode}.mp4", 
                         mime="video/mp4"
                     )
-                file_size = os.path.getsize(generator.FINAL)
-                st.info(f"📁 Dimensione file: {file_size / 1024 / 1024:.1f} MB")
 
                 # --- Inizio Sezione Anteprima Video ---
-                PREVIEW_DURATION = 5 # Durata dell'anteprima in secondi
+                PREVIEW_DURATION = 5
                 preview_file = "preview_output.mp4"
                 
                 st.subheader("Guarda un'Anteprima del Video")
                 if check_ffmpeg():
                     try:
                         st.info(f"Generazione anteprima di {PREVIEW_DURATION} secondi con audio...")
-                        # Usa FFmpeg per estrarre i primi PREVIEW_DURATION secondi
                         subprocess.run([
-                            "ffmpeg", "-y", # Sovrascrivi il file di output se esiste
-                            "-i", generator.FINAL, # Input è il video finale
-                            "-t", str(PREVIEW_DURATION), # Durata dell'anteprima
-                            "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast", # Compressione leggera e veloce per anteprima
-                            "-c:a", "copy", # Copia il flusso audio originale senza ricodifica
+                            "ffmpeg", "-y",
+                            "-i", generator.FINAL,
+                            "-t", str(PREVIEW_DURATION),
+                            "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast",
+                            "-c:a", "copy",
                             preview_file
-                        ], capture_output=True, check=True) # Cattura output e solleva errore se il comando fallisce
+                        ], capture_output=True, check=True)
                         
                         if os.path.exists(preview_file):
-                            st.video(preview_file) # Mostra l'anteprima
-                            os.remove(preview_file) # Pulisci il file di anteprima dopo la visualizzazione
+                            st.video(preview_file)
+                            os.remove(preview_file)
                         else:
                             st.warning("⚠️ Impossibile creare il file di anteprima. Verifica i log per errori FFmpeg.")
 
@@ -780,6 +787,82 @@ def main():
                 else:
                     st.warning("⚠️ FFmpeg non è disponibile. Impossibile generare l'anteprima.")
                 # --- Fine Sezione Anteprima Video ---
+
+                # --- Generazione Report Stilizzato ---
+                st.markdown("---")
+                st.subheader("📋 Report per Social / YouTube")
+
+                # Mappa nomi effetto → etichetta stilistica
+                effect_style_map = {
+                    "connessioni": "Connected Lines / Node Graph Synthesis",
+                    "rettangoli_griglia": "Rectangular Grid / Lattice Topology",
+                    "geometriche": "Complex Geometric Network / Poly-Node Web",
+                    "linee_orizzontali": "Horizontal Line Pulse / Waveform Scan",
+                    "linee_verticali": "Vertical Line Pulse / Spectral Column",
+                    "linee_casuali_verticali_orizzontali": "Stochastic Line Grid / Random Axis Emission",
+                    "quadrati": "Square Geometry / Tessellation Field",
+                    "rettangoli": "Rectangular Mass / Aspect-Ratio Drift",
+                    "forme_casuali_quadrati_rettangoli": "Random Shape Collapse / Mixed Geometry Field"
+                }
+                effect_label = effect_style_map.get(effect_mode, effect_mode.replace("_", " ").title())
+
+                # Calcola durata formattata
+                mins = int(audio_duration) // 60
+                secs = int(audio_duration) % 60
+                duration_str = f"{mins:02d}:{secs:02d}"
+
+                # Volume medio e dinamica
+                vol_mean = float(np.mean(rms_frames))
+                vol_std = float(np.std(rms_frames))
+                onset_mean = float(np.mean(onset_frames))
+
+                # Stima clipping sub (volume molto alto)
+                clipping_label = "Sub_Clipping" if vol_mean > 0.75 else ("Mid_Saturation" if vol_mean > 0.45 else "Clean_Signal")
+
+                # Determina bit depth display (librosa carica come float32)
+                bit_depth = "32-bit Float"
+
+                # Sample rate formattato
+                sr_khz = f"{sr // 1000}kHz"
+
+                # BPM stringa
+                bpm_str = f"{bpm_detected:.1f} BPM" if bpm_detected and bpm_detected > 0 else "N/A BPM"
+
+                # Resoluzione video
+                res_w, res_h = FORMAT_RESOLUTIONS[video_format]
+
+                # Codec video/audio
+                video_codec = "H.264" if sync_audio and check_ffmpeg() else "mp4v (RAW)"
+                audio_codec = "AAC" if sync_audio and check_ffmpeg() else "No Audio"
+
+                # Livello → label
+                level_map = {"soft": "Soft_Dynamics", "medium": "Medium_Impact", "hard": "Hard_Saturation"}
+                level_label = level_map.get(effect_level, effect_level.upper())
+
+                # Numero frame totali
+                total_frames_count = int(audio_duration * fps_choice)
+
+                report_text = f"""[ALINE_ARCHIVE] // PATTERN_{effect_mode.upper()} // {video_codec} // {audio_codec}
+:: STYLE: {effect_label}
+:: ENGINE: audio_line_generator [03.00]
+:: AUDIO: {sr_khz} / {bit_depth} / {bpm_str} / {clipping_label}
+:: PATTERN: {effect_mode.replace("_", " ").title()}
+:: LEVEL: {level_label} / Vol_μ={vol_mean:.2f} / Vol_σ={vol_std:.2f} / Onset_μ={onset_mean:.2f}
+:: FORMAT: {video_format} / {res_w}×{res_h}px / {fps_choice} FPS / {total_frames_count} Frames
+:: PROCESS: Mel-Spectrogram [{sr // 2 // 1000}kHz max] → RMS+Onset Sync → Frame Synthesis → {video_codec} Encode
+:: DURATION: {duration_str}
+"It's not a video. It's the music rendered as geometry."
+> Direction & Algorithm: Loop507
+#AudioVisual #GenerativeArt #AlgorithmicVideo #SoundDesign #NewMediaArt #VisualMusic #SpectralArt #MelSpectrogram #SignalProcessing #AudioSync #ComputationalArt #FrequencyMapping #MotionDesign #DataArt #OpenCVArt"""
+
+                st.code(report_text, language=None)
+
+                st.download_button(
+                    label="⬇️ Scarica Report (.txt)",
+                    data=report_text,
+                    file_name=f"report_audio_linee_{effect_mode}_{video_format}.txt",
+                    mime="text/plain"
+                )
 
             else:
                 st.error("❌ Errore nella generazione del video.")
