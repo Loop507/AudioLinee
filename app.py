@@ -649,6 +649,18 @@ def main():
     st.markdown("### by Loop507")
     st.markdown("Carica un file audio e genera un video visivo sincronizzato con volume e tempo musicale.")
 
+    # Inizializza session state per sopravvivere ai rerun da download_button
+    if "video_path" not in st.session_state:
+        st.session_state.video_path = None
+    if "report_text" not in st.session_state:
+        st.session_state.report_text = None
+    if "video_filename" not in st.session_state:
+        st.session_state.video_filename = None
+    if "report_filename" not in st.session_state:
+        st.session_state.report_filename = None
+    if "file_size_mb" not in st.session_state:
+        st.session_state.file_size_mb = None
+
     uploaded_file = st.file_uploader("🎧 Carica un file audio (.wav o .mp3)", type=["wav", "mp3"])
     if uploaded_file is not None:
         if not validate_audio_file(uploaded_file):
@@ -746,53 +758,8 @@ def main():
             
             if success and os.path.exists(generator.FINAL):
                 file_size = os.path.getsize(generator.FINAL)
-                st.info(f"📁 Dimensione file: {file_size / 1024 / 1024:.1f} MB")
 
-                # --- Pulsante download video ---
-                with open(generator.FINAL, "rb") as f:
-                    st.download_button(
-                        "⬇️ Scarica il video", 
-                        f, 
-                        file_name=f"audio_linee_sync_{video_format}_{effect_level}_{effect_mode}.mp4", 
-                        mime="video/mp4"
-                    )
-
-                # --- Inizio Sezione Anteprima Video ---
-                PREVIEW_DURATION = 5
-                preview_file = "preview_output.mp4"
-                
-                st.subheader("Guarda un'Anteprima del Video")
-                if check_ffmpeg():
-                    try:
-                        st.info(f"Generazione anteprima di {PREVIEW_DURATION} secondi con audio...")
-                        subprocess.run([
-                            "ffmpeg", "-y",
-                            "-i", generator.FINAL,
-                            "-t", str(PREVIEW_DURATION),
-                            "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast",
-                            "-c:a", "copy",
-                            preview_file
-                        ], capture_output=True, check=True)
-                        
-                        if os.path.exists(preview_file):
-                            st.video(preview_file)
-                            os.remove(preview_file)
-                        else:
-                            st.warning("⚠️ Impossibile creare il file di anteprima. Verifica i log per errori FFmpeg.")
-
-                    except subprocess.CalledProcessError as e:
-                        st.error(f"❌ Errore FFmpeg durante la creazione dell'anteprima: {e.stderr.decode()}")
-                    except Exception as e:
-                        st.error(f"❌ Errore durante la generazione dell'anteprima: {str(e)}")
-                else:
-                    st.warning("⚠️ FFmpeg non è disponibile. Impossibile generare l'anteprima.")
-                # --- Fine Sezione Anteprima Video ---
-
-                # --- Generazione Report Stilizzato ---
-                st.markdown("---")
-                st.subheader("📋 Report per Social / YouTube")
-
-                # Mappa nomi effetto → etichetta stilistica
+                # Costruisci report
                 effect_style_map = {
                     "connessioni": "Connected Lines / Node Graph Synthesis",
                     "rettangoli_griglia": "Rectangular Grid / Lattice Topology",
@@ -805,47 +772,26 @@ def main():
                     "forme_casuali_quadrati_rettangoli": "Random Shape Collapse / Mixed Geometry Field"
                 }
                 effect_label = effect_style_map.get(effect_mode, effect_mode.replace("_", " ").title())
-
-                # Calcola durata formattata
                 mins = int(audio_duration) // 60
                 secs = int(audio_duration) % 60
                 duration_str = f"{mins:02d}:{secs:02d}"
-
-                # Volume medio e dinamica
                 vol_mean = float(np.mean(rms_frames))
                 vol_std = float(np.std(rms_frames))
                 onset_mean = float(np.mean(onset_frames))
-
-                # Stima clipping sub (volume molto alto)
                 clipping_label = "Sub_Clipping" if vol_mean > 0.75 else ("Mid_Saturation" if vol_mean > 0.45 else "Clean_Signal")
-
-                # Determina bit depth display (librosa carica come float32)
-                bit_depth = "32-bit Float"
-
-                # Sample rate formattato
                 sr_khz = f"{sr // 1000}kHz"
-
-                # BPM stringa
                 bpm_str = f"{bpm_detected:.1f} BPM" if bpm_detected and bpm_detected > 0 else "N/A BPM"
-
-                # Resoluzione video
                 res_w, res_h = FORMAT_RESOLUTIONS[video_format]
-
-                # Codec video/audio
                 video_codec = "H.264" if sync_audio and check_ffmpeg() else "mp4v (RAW)"
                 audio_codec = "AAC" if sync_audio and check_ffmpeg() else "No Audio"
-
-                # Livello → label
                 level_map = {"soft": "Soft_Dynamics", "medium": "Medium_Impact", "hard": "Hard_Saturation"}
                 level_label = level_map.get(effect_level, effect_level.upper())
-
-                # Numero frame totali
                 total_frames_count = int(audio_duration * fps_choice)
 
                 report_text = f"""[ALINE_ARCHIVE] // PATTERN_{effect_mode.upper()} // {video_codec} // {audio_codec}
 :: STYLE: {effect_label}
 :: ENGINE: audio_line_generator [03.00]
-:: AUDIO: {sr_khz} / {bit_depth} / {bpm_str} / {clipping_label}
+:: AUDIO: {sr_khz} / 32-bit Float / {bpm_str} / {clipping_label}
 :: PATTERN: {effect_mode.replace("_", " ").title()}
 :: LEVEL: {level_label} / Vol_μ={vol_mean:.2f} / Vol_σ={vol_std:.2f} / Onset_μ={onset_mean:.2f}
 :: FORMAT: {video_format} / {res_w}×{res_h}px / {fps_choice} FPS / {total_frames_count} Frames
@@ -855,17 +801,69 @@ def main():
 > Direction & Algorithm: Loop507
 #AudioVisual #GenerativeArt #AlgorithmicVideo #SoundDesign #NewMediaArt #VisualMusic #SpectralArt #MelSpectrogram #SignalProcessing #AudioSync #ComputationalArt #FrequencyMapping #MotionDesign #DataArt #OpenCVArt"""
 
-                st.code(report_text, language=None)
+                # Salva tutto in session_state → sopravvive ai rerun dei download_button
+                st.session_state.video_path = generator.FINAL
+                st.session_state.video_filename = f"audio_linee_sync_{video_format}_{effect_level}_{effect_mode}.mp4"
+                st.session_state.report_text = report_text
+                st.session_state.report_filename = f"report_audio_linee_{effect_mode}_{video_format}.txt"
+                st.session_state.file_size_mb = file_size / 1024 / 1024
 
-                st.download_button(
-                    label="⬇️ Scarica Report (.txt)",
-                    data=report_text,
-                    file_name=f"report_audio_linee_{effect_mode}_{video_format}.txt",
-                    mime="text/plain"
-                )
+                # Anteprima (solo al momento della generazione, non persiste — ma non serve)
+                PREVIEW_DURATION = 5
+                preview_file = "preview_output.mp4"
+                st.subheader("Guarda un'Anteprima del Video")
+                if check_ffmpeg():
+                    try:
+                        st.info(f"Generazione anteprima di {PREVIEW_DURATION} secondi con audio...")
+                        subprocess.run([
+                            "ffmpeg", "-y",
+                            "-i", generator.FINAL,
+                            "-t", str(PREVIEW_DURATION),
+                            "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast",
+                            "-c:a", "copy",
+                            preview_file
+                        ], capture_output=True, check=True)
+                        if os.path.exists(preview_file):
+                            st.video(preview_file)
+                            os.remove(preview_file)
+                        else:
+                            st.warning("⚠️ Impossibile creare il file di anteprima.")
+                    except subprocess.CalledProcessError as e:
+                        st.error(f"❌ Errore FFmpeg anteprima: {e.stderr.decode()}")
+                    except Exception as e:
+                        st.error(f"❌ Errore anteprima: {str(e)}")
+                else:
+                    st.warning("⚠️ FFmpeg non disponibile. Impossibile generare l'anteprima.")
 
             else:
                 st.error("❌ Errore nella generazione del video.")
+
+        # --- Download video + report: FUORI dal blocco genera, leggono da session_state ---
+        # Sopravvivono ai rerun causati dai download_button stessi
+        if st.session_state.video_path and os.path.exists(st.session_state.video_path):
+            st.markdown("---")
+            st.info(f"📁 Dimensione file: {st.session_state.file_size_mb:.1f} MB")
+
+            with open(st.session_state.video_path, "rb") as f:
+                st.download_button(
+                    "⬇️ Scarica il video",
+                    f,
+                    file_name=st.session_state.video_filename,
+                    mime="video/mp4",
+                    key="dl_video"
+                )
+
+        if st.session_state.report_text:
+            st.markdown("---")
+            st.subheader("📋 Report per Social / YouTube")
+            st.code(st.session_state.report_text, language=None)
+            st.download_button(
+                label="⬇️ Scarica Report (.txt)",
+                data=st.session_state.report_text,
+                file_name=st.session_state.report_filename,
+                mime="text/plain",
+                key="dl_report"
+            )
 
         # Pulsante per pulire i file temporanei
         if st.button("🧹 Pulisci file temporanei"):
